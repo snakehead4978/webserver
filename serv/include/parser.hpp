@@ -6,14 +6,13 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/01/09 19:12:53 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/16 23:53:58 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/23 16:05:16 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #ifndef PARSER_H
 # define PARSER_H
 #include "Message.hpp"
-#include "Settings.hpp"
 
 #include <iostream>
 #include <string>
@@ -31,7 +30,7 @@
 #include "ServerSocket.hpp"
 // int	server(Settings &setting);
 
-
+class ServerSocket;
 
 int	server(std::list<ServerSocket *>&);
 bool isEmptyLine(std::string &line);

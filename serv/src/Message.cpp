@@ -6,31 +6,17 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 09:32:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/19 06:00:54 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 07:14:09 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Message.hpp"
 	
-Message::Message() : chunked(-1), connection(true), size(-1) {}
+Message::Message() : size(-1) {}
 
 Message::~Message()
 {
-	std::cout << std::endl << "Destroying headers container." << std::endl;
 	headers.clear();
-}
-
-Message::Message(const Message& t) : method(t.method), target(t.target), headers(t.headers) {}
-
-Message&	 Message::operator=(const Message& t)
-{
-	if (this != &t)
-	{
-		method = t.method;
-		target = t.target;
-		headers = t.headers;
-	}
-	return (*this);
 }
 
 void	Message::setMethod(std::string &s)
@@ -50,23 +36,19 @@ int	Message::getMethod() const
 	return (method);
 }
 
-void	Message::setHeaders(const std::string &key, const std::string &value)
+const std::string &Message::getHeader(const std::string &key) const
 {
-	if (headers.find(key) != headers.end())
-		throw std::invalid_argument("Key already exists.");
-	headers[key] = value;
+    return (headers.at(key).front());
 }
 
-const std::string	&Message::getHeader(const std::string &key) const
+bool	Message::headerExists(const std::string &key)
 {
-	return (headers.at(key));
+	return (headers.count(key));
 }
 
-void	Message::printHeaders()
+const std::list<std::string> &Message::getHeaders(const std::string &key) const
 {
-	typename std::map<std::string, std::string>::iterator start;
-	for (start = headers.begin(); start != headers.end(); ++start)
-		std::cout << "Key: " << start->first << "  ||   Value: " << start->second << std::endl;
+    return (headers.at(key));
 }
 
 void	Message::setTarget(std::string str)
@@ -74,98 +56,143 @@ void	Message::setTarget(std::string str)
 	target = str;
 }
 
-std::string	Message::getTarget() const
+std::string	&Message::getTarget()
 {
 	return (target);
 }
 
 static void smallcase(std::string &string)
 {
+	if (string.empty())
+		return ;
 	for (std::string::iterator i = string.begin(); i != string.end(); i++)
 	{
-		if (*i >= 'a' && *i <= 'z')
-			*i -= 32;
+		if (*i >= 'A' && *i <= 'Z')
+			*i += 32;
 	}
 }
 
-int Message::changeConnection(std::string &word) const
-{
-	if (connection && word.find("close") != word.npos)
-		return (1);
-	if (!connection && word.find("keep-alive") != word.npos)
-		return (1);
-	return (0);	
-}
-
-int	Message::parseLine(std::string line)
+static void splitValue(std::string &value, std::list<std::string> &values)
 {
 	static std::stringstream ss;
-	std::string word;
-	std::string word2;
+	static std::stringstream inner;
 	ss.clear();
-	ss.str(line);
-	ss >> word;
-	smallcase(word);
-	if (!(ss >> word2))
+	ss.str(value);
+	std::list<std::string> result;
+	std::string token;
+	while (std::getline(ss, token, ';'))
 	{
-		if (word == "host:" || word == "host")
-			return (400);
-		if (word.back() != ':' && line.back() == ' ')
-			return (400);	
-		return (0);
+		inner.clear();
+		inner.str(token);
+		std::string word;
+		while (inner >> word)
+			values.push_back(word);
 	}
-	if (word.back() != ':')
+}
+
+int Message::parseLine(std::string line)
+{
+	std::string word;
+	std::string value;
+	size_t colon = line.find(':');
+	if ((colon == line.npos && isWhiteSpace(line[line.size() - 1])) || colon == 0)
 		return (400);
-	word.erase(word.end() - 1);
-	int swap;
-	if (word == "host")
+	int first = firstChar(line);
+	if (colon == line.npos)
+		word = line.substr(first);
+	else
+		word = line.substr(first, colon - first);
+	smallcase(word);
+	if (word.empty())
+		return (400);
+	std::cerr << "$" << word <<  "$" << std::endl;
+	if (colon == line.npos)
 	{
-		if (!host.empty() || ss >> word)
+		if (word == "host")
 			return (400);
-		host = word2;
+		else
+		{
+			headers[word];
+			return (0);
+		}
 	}
-	else if (word == "connection")
-	{
-		swap = !changeConnection(word2);
-		while (ss >> word  && swap)
-			swap = !changeConnection(word);
-		if (!swap)
-			connection = ~connection;
-	}
-	else if (word == "transfer-encoding")
-	{
-		if (chunked != -1)
+	value = line.substr(colon + 1);
+	value = value.substr(firstChar(value));
+	if (word == "host" && headers.count("host"))
 			return (400);
-		swap =  (word2.find("chunked") != word2.npos);
-		while (ss >> word && swap)
-			swap = (word.find("chunked") != word.npos);
-		if (swap)
-			chunked = true;
-	}
-	else if (word == "content-length")
+	if (word == "content-type" && headers.count("content-type"))
+		return (400);
+	if (word == "content-length" && headers.count("content-length"))
+		return (400);
+	if (word == "transfer-encoding" && headers.count("transfer-encoding"))
+		return (400);
+	splitValue(value, headers[word]);
+	if (word == "host" && headers["host"].size() != 1)
+		return (400);
+	return (0);
+}
+
+int		Message::finalChecks()
+{
+	if (!headers.count("host"))
+		return (400);
+	if (headers.count("transfer-encoding") && !headers["transfer-encoding"].empty())
 	{
-		if (size != -1 || getNumSoft(word2, size))
+		for (std::list<std::string>::iterator i = headers["transfer-encoding"].begin(); i != headers["transfer-encoding"].end(); i++)
+		{
+			if ((*i) != "chunked")
+				return (501);	
+		}
+		if (headers["transfer-encoding"].size() != 1)
+			return (400);
+	}
+	if (headers.count("content-length") && !headers["content-length"].empty())
+	{
+		if (headers["content-length"].size() > 1)
+			return (400);
+		std::string sizeString = getHeader("content-length");
+		if (getNumSoft(sizeString, size))
 			return (400);
 	}
 	return (0);
 }
 
-bool	Message::getChunked() const
+bool	Message::getConnection()
 {
-	return ((chunked));
-}
-
-bool	Message::getConnection() const
-{
+	bool connection = true;
+	if (headers.empty())
+		return (false);
+	if (!headers.count("connection") || headers["connection"].empty())
+		return (connection);
+	for (std::list<std::string>::iterator i = headers["connection"].begin(); i != headers["connection"].end(); i++)
+	{
+		if (connection && i->find("close") != i->npos)
+			connection = !connection;
+		else if (!connection && i->find("keep-alive") != i->npos)
+			connection = !connection;
+	}
 	return (connection);
 }
 
-std::string	&Message::getHost()
+std::string Message::getBoundary()
 {
-	return (host);
+	return (headers["content-type"].back());
 }
 
 int	Message::getSize() const
 {
 	return (size);
 }
+
+std::map<std::string, std::list<std::string> >&Message::getHeaderMap()
+{
+	return (headers);
+}
+
+int	Message::getContentTypeSize()
+{
+	if (!headers.count("content-type"))
+		return (0);
+	return (headers.at("content-type").size());
+}
+

@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/23 03:50:51 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 07:53:35 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -30,6 +30,9 @@ ClientSocket::ClientSocket(int soc) : ACustomSocket(CLIENT)
 	time = std::time(0);
 	timedOut = false;
 	cgi = 0;
+	location = 0;
+	connection = false;
+	maxBodySize = MAX_BODY;
 	if (sock == -1)
 	{
 		perror("accept");
@@ -45,57 +48,47 @@ ClientSocket::ClientSocket(int soc) : ACustomSocket(CLIENT)
 
 ClientSocket::~ClientSocket()
 {
+	if (message)
+		delete message;
 	if (writeFile != -1)
 	{
 		close(writeFile);
 	}
-	epo.data.fd = sock;
-	epoll_ctl(epol, EPOLL_CTL_DEL, sock, &epo);
 	if (cgi)
 		delete cgi;
 }
 
-void	ClientSocket::addToRequest(std::string &str)
+void	ClientSocket::addToRequest(std::string &str, int read)
 {
-	request.append(str);
-}
-
-int	secondparse(std::string &s, Message &msg)
-{
-	std::stringstream content (s);
-	std::string name;
-	std::string value;
-	content >> name;
-	if (*(name.end() - 1) != ':')
-	{
-		std::cout << "unknown name: " << name << std::endl;
-		return ;
-	}
-	// std::cout << "Key: " << name.substr(0, name.size() - 1);
-	content >> value;
-	// std::cout << "     |     Data: " << name << std::endl;
-	name.resize(name.size() - 1);
-	msg.setHeaders(name, value);
+	request.append(str, 0, read);
 }
 
 int	ClientSocket::fillFirstBody()
 {
-	if (message->getHost().empty())
-		return (setError(400));
-	secondCheck();
-	if (message->getChunked() && message->getSize() != -1)
-		return (setError(400));
-	if (!(message->getMethod() & POST))
-		return (0);
-	int checks = myServer->initialChecks(message->getSize(), message->getMethod(), message->getTarget(), maxBodySize);
+	std::cerr << sock << " filling first body with method " << message->getMethod() << std::endl;
+	int checks = message->finalChecks();
 	if (checks)
 		return (setError(checks));
-	readTo += 4;
+	if (message->getHeader("host").empty())
+		return (setError(400));
+	secondCheck();
+	if (!myServer)
+		return (setError(500));
+	if (message->headerExists("transfer-encoding") && !message->getHeader("transfer-encoding").empty() && message->getSize() != -1)
+		return (setError(400));
+	myServer->setLocation(message, &location);
+	if (!location)
+		return (setError(500));
+	checks = myServer->initialChecks(message->getSize(), message->getMethod(), maxBodySize, location);
+	if (checks)
+		return (setError(checks));
 	if (!(message->getMethod() & POST))
 	{
+		std::cerr << "method is not POST\n";
 		readDone = true;
 		return (0);
 	}
+	readTo += 4;
 	return (fillBody());
 }
 
@@ -108,22 +101,26 @@ int	ClientSocket::fillHeaders()
 		return (setError(400));
 	std::string::size_type readNext;
 	int	err;
-	while (readNext = request.find("\r\n", readTo + 2) <= n)
+	readNext = request.find("\r\n", readTo + 2);
+	while (readNext <= n && readNext != request.npos)
 	{
-		err = message->parseLine(request.substr(readTo + 2, readNext));
+		std::string a = request.substr(readTo + 2, readNext - readTo - 2);
+		err = message->parseLine(a);
+		std::cerr << "line to parse and size :" << a << " " << a.size() << std::endl;
 		if (err)
 			return (setError(err));
 		readTo = readNext;
+		if (request.size() <= readNext + 2)
+			break ;
+		readNext = request.find("\r\n", readTo + 2);
 	}
 	if (!header)
-		fillFirstBody();
+		return (fillFirstBody());
 	return (0);
 }
 
 int	ClientSocket::resetRead()
 {
-	request.clear();
-	request.resize(0);
 	body.clear();
 	body.resize(0);
 	header = true;
@@ -143,8 +140,8 @@ int	ClientSocket::resetWrite(bool all, bool read)
 		nWrite = 0;
 		if (writeFile != -1)
 		{
-			if (close(writeFile))
-				return (1);
+			close(writeFile);
+			writeFile = -1;
 		}
 		writeFile = -1;
 		writeSize = -1;
@@ -163,57 +160,116 @@ int	ClientSocket::resetWrite(bool all, bool read)
 
 int	ClientSocket::switchToRead()
 {
-	epo.data.fd = sock;
-	epo.events = EPOLLIN;
-	if (epoll_ctl(epol, EPOLL_CTL_MOD, sock, &epo))
-		return (perror("epoll_ctl"), 1);
+	if (message)
+		delete message;
+	message = 0;
+	error = 0;
+	location = 0;
+	std::string start;
+	if (readTo < request.size())
+		start = request.substr(readTo);
+	size_t s = start.find_first_not_of("\r\n");
+	if (s != start.npos)
+		start = start.substr(s);
+	else
+		start.clear();
+	request = start;
+	readTo = 0;
+	nRead = 0;
+	std::cerr << sock << "switched to read" << std::endl;
+	struct epoll_event ev;
+	ev.data.fd = sock;
+	ev.events = EPOLLIN;
+	if (epoll_ctl(epol, EPOLL_CTL_MOD, sock, &ev) == -1)
+	{
+		if (errno == ENOENT)
+			epoll_ctl(epol, EPOLL_CTL_ADD, sock, &ev);
+		else
+			return (perror("epoll_ctl"), 1);
+	}
+	if (!request.empty() && request.find("\r\n") != request.npos)
+		return (handleRequest());
+	request.clear();
+	return (0);
+}
+
+int	ClientSocket::turnCgi(bool on)
+{
+	struct epoll_event ev;
+	ev.data.fd = sock;
+	ev.events = EPOLLOUT;
+	if (on)
+	{
+		std::cerr << "client try to readd CGI" << std::endl;
+		if (epoll_ctl(epol, EPOLL_CTL_ADD, sock, &ev))
+			return (perror("epoll_ctl"), 1);
+	}
+	else
+	{
+		std::cerr << "client try to remove CGI" << std::endl;
+		if (epoll_ctl(epol, EPOLL_CTL_DEL, sock, &ev) && errno != ENOENT)
+			return (perror("epoll_ctl"), 1);		
+	}
+	std::cerr << "turnCgi on=" << on << " sock=" << sock << std::endl;
 	return (0);
 }
 
 int	ClientSocket::switchToWrite()
 {
-	epo.data.fd = sock;
-	epo.events = EPOLLOUT;
-	if (epoll_ctl(epol, EPOLL_CTL_MOD, sock, &epo))
-		return (perror("epoll_ctl"), 1);
+	std::cerr << sock << " switched to write" << std::endl;
+	struct epoll_event ev;
+	ev.data.fd = sock;
+	ev.events = EPOLLOUT;
+	if (epoll_ctl(epol, EPOLL_CTL_MOD, sock, &ev) == -1)
+	{
+		if (errno == ENOENT)
+			epoll_ctl(epol, EPOLL_CTL_ADD, sock, &ev);
+		else
+			return (perror("epoll_ctl"), 1);
+	}
 	return (0);
 }
 
 int	ClientSocket::handleWrite()
 {
+	std::cerr << "handleWrite called, answer.size=" << answer.size() << " error=" << error << std::endl;
 	if (error)
-		myServer->fillError(error, message->getConnection(), message->getTarget(), answer);
+	{
+		if (!myServer)
+		{
+			resetWrite(true, true);
+			return (1);
+		}
+		myServer->fillError(error, message, answer, writeFile, &location, connection);
+		error = 0;
+	}
 	check = 0;
 	if (writeFile != -1 && !answer.size())
 	{
-		std::cout << "im here" << std::endl;
 		static char outBuff[OUTPUT_BUFF];
 		bzero(outBuff, OUTPUT_BUFF);
 		int n = read(writeFile, outBuff, OUTPUT_BUFF);
 		if (n == -1)
-			perror("read");
-		write(sock, outBuff, n);
-		if (n < BUFSIZ)
-			return (resetWrite(true, true));
+			return (resetWrite(true, false), 1);
+		if (n == 0)
+			return (resetWrite(true, true), !connection);
+		if (write(sock, outBuff, n) == -1)
+			return (1);
+		if (n < OUTPUT_BUFF)
+			return (resetWrite(true, true), !connection);
 	}
 	else
 	{
 		if (writeSize == -1)
 			writeSize = answer.size();
-		nWrite += write(sock, &answer.at(nWrite), writeSize - nWrite);
+		int n = write(sock, &answer.at(nWrite), writeSize - nWrite);
+		if (n == -1)
+			return (1);
+		nWrite += n;
 		if (nWrite == writeSize)
-			return (resetWrite(writeFile == -1, true));
+			return (resetWrite(writeFile == -1, true), !connection);
 	}
 	return (0);
-}
-
-static std::string	convert(int num)
-{
-	static std::stringstream ss;
-	ss.str("");
-	ss.clear();
-	ss << num;
-	return (ss.str());
 }
 
 int	ClientSocket::setError(int num)
@@ -224,6 +280,7 @@ int	ClientSocket::setError(int num)
 
 int	ClientSocket::handleFirstLine()
 {
+	std::cerr << "first line: $" << request.substr(0, readTo) << "$" << std::endl;
 	std::string firstLine = request.substr(0, readTo);
 	std::string word;
 	static std::stringstream	ss;
@@ -241,7 +298,7 @@ int	ClientSocket::handleFirstLine()
 	{
 		return (setError(501));
 	}
-	if (!(ss >> word) || word.front() != '/')
+	if (!(ss >> word) || word[0] != '/')
 		return (setError(400));
 	message->setTarget(word);
 	if (!(ss >> word))
@@ -257,7 +314,7 @@ static int	getHexa(std::string num)
 {
 	long	final = 0;
 	char c;
-	for (int i = 0; c = num[i]; i++)
+	for (int i = 0; (c = num[i]); i++)
 	{
 		if (final >= 10000000)
 			return (-1);
@@ -275,7 +332,7 @@ static int unChunk(std::string line, int &size, int &skipTo)
 {
 	int i = 0;
 	char c = line[i];
-	while ((c <= '9' && c >= '0') || (c <= 'f' && c >= 'a') || (c <= 'F' && c >= 'A') && line[i])
+	while (((c <= '9' && c >= '0') || (c <= 'f' && c >= 'a') || (c <= 'F' && c >= 'A')) && line[i])
 		c = line[++i];
 	if (!line[i] || (line[i] == '\r' && !line[i + 1]))
 		return (1);
@@ -290,26 +347,28 @@ static int unChunk(std::string line, int &size, int &skipTo)
 
 int	ClientSocket::fillBody()
 {
-	if (message->getChunked())
+	std::cerr << sock << " filling body" << std::endl;
+	if (message->headerExists("transfer-encoding") && !message->getHeader("transfer-encoding").empty())
 	{
 		int size;
 		int skipTo;
 		int check;
-		while (body.size() < maxBodySize)
+		while (!readDone)
 		{
 			check = unChunk(request.substr(readTo, request.size() - readTo), size, skipTo);
 			if (check > 1)
 				return (setError(check));
-			else if (!check)
+			else if (check == 1)
 				return (0);
 			else
 			{
-				if (request.size() >= readTo + skipTo + size + 2)
+				if (request.size() >= readTo + (size_t)skipTo + (size_t)size + 2)
 				{
 					readTo += skipTo;
 					body.append(request.substr(readTo, size));
 					if (!size)
 					{
+						readTo += size + 2;
 						readDone = true;
 						return (0);
 					}
@@ -318,18 +377,29 @@ int	ClientSocket::fillBody()
 				else
 					return (0);
 			}
+			if (body.size() > (size_t)maxBodySize)
+				return (setError(413));
 		}
 	}
 	else
+	{
 		body.append(request.substr(readTo, request.size() - readTo));
-	if (body.size() > maxBodySize)
+		readTo = request.size();
+		if (message->getSize() != -1 && (int)body.size() >= message->getSize())
+		{
+			readTo = readTo - (body.size() - message->getSize());
+			body.resize(message->getSize());
+			readDone = true;
+			return (0);
+		}
+	}
+	if (body.size() > (size_t)maxBodySize)
 		return (setError(413));
 	return (0);
 }
 
 int ClientSocket::answerError(int err)
 {
-	int error;
 	error = err;
 	resetRead();
 	return (0);
@@ -350,47 +420,51 @@ int	ClientSocket::handleRequest()
 			message = new Message;
 			if (!message)
 				return (answerError(500));
+			nRead = 1;
 			readTo = n;
-			handleFirstLine();
+			if (handleFirstLine())
+				return (answerError(error));
 			fillHeaders();
 		}
 	}
 	else if (n != request.npos)
-		fillHeaders();
+	{
+		if (header)
+			fillHeaders();
+		else if (!readDone)
+			fillBody();
+	}
 	if (error)
 		return (answerError(error));
-	if (header)
-		nRead++;
-	else if (!readDone)
+	else if (!readDone && !header)
+	{
+		std::cerr << "entering fillbody from handlerequest\n";
 		fillBody();
+	}
 	if (error)
 		return (answerError(error));
 	if (readDone)
 	{
+		std::cerr << sock << " reading done time to parse" << std::endl;
 		int errCheck;
-		if (message->getMethod() & GET)
-			errCheck = myServer->fillGet(message, answer, writeFile, port);
+		std::string cgiPath;
+		std::string rootPath;
+		if (myServer->isCGI(message, location, cgiPath, rootPath))
+		{
+			errCheck = myServer->fillCgi(location, cgiPath, rootPath, answer, this, connection);
+			if (errCheck)
+				return (answerError(errCheck));
+			return (0);
+		}
+		else if (message->getMethod() & GET)
+			errCheck = myServer->fillGet(message, answer, writeFile, location, connection);
 		else if (message->getMethod() & POST)
-			errCheck = myServer->fillPost(message, answer, writeFile, port);
+			errCheck = myServer->fillPost(message, answer, body, location, connection);
 		else
-			errCheck = myServer->fillDelete(message, answer);
+			errCheck = myServer->fillDelete(message, answer, location, connection);
 		if (errCheck)
 			return (answerError(errCheck));
-		// answer.append("HTTP/1.1");
-		std::cout << "Number of reads done: " << nRead << std::endl;
-		std::cout << "request is :" << request.substr(0, n) << "$" << std::endl;
-		writeFile = open("./default_pages/404.html", O_RDONLY);
-		if (writeFile == -1)
-		{
-			std::cout << "wrong file path" << std::endl;
-			return (1);
-		}
-		struct stat statBuf;
-		fstat(writeFile, &statBuf);
-		answer.append("HTTP/1.1 200 OK\r\nContent-Length: ");
-		answer.append(convert(statBuf.st_size));
-		answer.append("\r\n\r\n");
-		// answer.append("HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World!");
+		std::cerr << "dispatching, readTo=" << readTo << " request.size()=" << request.size() << std::endl;
 		return (resetRead());
 	}
 	return (0);
@@ -406,16 +480,19 @@ bool	ClientSocket::isBigHeader() const
 	return (bigHeader);
 }
 
-void	ClientSocket::firstCheck(int _port, std::list<ACustomSocket *> &allSockets)
+void	ClientSocket::firstCheck(int _port, std::list<ACustomSocket *> &allSockets, ServerSocket *server)
 {
 	if (check)
 		return ;
 	port = _port;
-	check = 1;	
+	check = 1;
+	myServer = server;
+	if (allSockets.empty())
+		return ;
 	for (std::list<ACustomSocket *>::iterator i = allSockets.begin(); i != allSockets.end(); i++)
 	{
-		if (!(*i)->isClient() && ((ServerSocket *)(*i))->portInfo(port))
-				possibleServers.push_back((ServerSocket *)(*i));			
+		if ((*i)->isWhat() == OWNER && ((ServerSocket *)(*i))->portInfo(port))
+			possibleServers.push_back((ServerSocket *)(*i));			
 	}
 	if (possibleServers.size() == 1)
 	{
@@ -430,7 +507,9 @@ void	ClientSocket::secondCheck()
 	if (check == 2)
 		return ;
 	check = 2;
-	std::string host = message->getHost();
+	std::string host = message->getHeader("host");
+	if (possibleServers.empty())
+		return ;
 	for (std::list<ServerSocket *>::iterator i = possibleServers.begin(); i != possibleServers.end(); i++)
 	{
 		if ((*i)->checkHostname(host))
@@ -462,4 +541,81 @@ int	ClientSocket::checkTime()
 		answerError(408);
 	}
 	return (0);
+}
+
+void	ClientSocket::appendAnswer(std::string &str)
+{
+	answer.append(str);
+}
+
+std::string &ClientSocket::getBody()
+{
+	return (body);
+}
+
+Message	*ClientSocket::getMessage()
+{
+	return (message);
+}
+
+int	ClientSocket::prependAnswer(std::string str)
+{
+	std::string::size_type split = answer.find("\r\n\r\n");
+	if (split == answer.npos)
+		return (500);
+	if (answer.find("Content-Length:") == answer.npos && answer.find("content-length:") == answer.npos)
+	{
+		std::string contentLength = "Content-Length: " + convert((int)(answer.size() - split - 4)) + "\r\n";
+		answer.insert(split + 2, contentLength);
+	}
+	answer.insert(0, str);
+	return (0);
+}
+
+int	ClientSocket::timeout()
+{
+	setError(408);
+	resetRead();
+	return (0);
+}
+
+std::string &ClientSocket::getAnswer()
+{
+	return (answer);
+}
+
+int		ClientSocket::createCgi(std::string &cgiPath, std::string &rootPath)
+{
+	std::string portaddr = convert(port);
+	cgi = new Cgi(this, cgiPath, rootPath, portaddr);
+	return (0);
+}
+
+int		ClientSocket::startCgi()
+{
+	if (!cgi)
+		return (1);
+	return (cgi->execute());
+}
+
+int		ClientSocket::cgiError(int err)
+{
+	error = err;
+	resetRead();
+	return (err);
+}
+
+void	ClientSocket::delCgi()
+{
+	cgi = 0;
+}
+
+bool	ClientSocket::getConnection()
+{
+	return (connection);
+}
+
+void	ClientSocket::setConnection(bool connect)
+{
+	connection = connect;
 }

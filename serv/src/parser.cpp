@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/09 18:46:02 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/16 23:53:05 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 08:52:06 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -53,24 +53,6 @@ int	firstparse(std::string &s, Message &msg)
 	return (0);
 }
 
-void	secondparse(std::string &s, Message &msg)
-{
-	std::stringstream content (s);
-	std::string name;
-	std::string value;
-	content >> name;
-	if (*(name.end() - 1) != ':')
-	{
-		std::cout << "unknown name: " << name << std::endl;
-		return ;
-	}
-	// std::cout << "Key: " << name.substr(0, name.size() - 1);
-	content >> value;
-	// std::cout << "     |     Data: " << name << std::endl;
-	name.resize(name.size() - 1);
-	msg.setHeaders(name, value);
-}
-
 bool isEmptyLine(std::string &line)
 {
 	int size = line.size();
@@ -85,6 +67,8 @@ bool isEmptyLine(std::string &line)
 
 void	clearServers(std::list<ServerSocket *> &servers)
 {
+	if (servers.empty())
+		return ;
 	for (std::list<ServerSocket *>::iterator i = servers.begin(); i != servers.end(); i++)
 		delete *i;
 	servers.clear();
@@ -134,9 +118,8 @@ int	parseConfig(std::string filename, std::list<ServerSocket *> &servers)
 	if (!conf.is_open())
 		return (1);
 	std::string line;
-	while (!conf.eof())
+	while (std::getline(conf, line))
 	{
-		std::getline(conf, line);
 		lineNum++;
 		if (conf.fail())
 			return (clearServers(servers), 1);
@@ -159,6 +142,8 @@ void printServers(std::list<ServerSocket *> &servers)
 static void pruneServers(std::list<ServerSocket *> &servers)
 {
 	std::set<int> ports_in_use;
+	if (servers.empty())
+		return ;
 	for (std::list<ServerSocket *>::iterator i = servers.begin(); i != servers.end(); i++)
 		(*i)->checkPorts(ports_in_use);	
 }
@@ -166,49 +151,19 @@ static void pruneServers(std::list<ServerSocket *> &servers)
 int	main(int ac, char **av)
 {
 	std::cout << std::endl << "Hi program has started, Good Luck!" << std::endl;
-	// if (ac == 2)
-	// {
-	// 	std::cout << std::endl << "Parameters detected!" << std::endl;
-	// 	// Creating message object
-	// 	Message	msg;
-	// 	// Opening file and parsing it
-	// 	std::ifstream file(av[1]);
-	// 	std::string temp;
-	// 	std::getline(file, temp);
-	// 	if (firstparse(temp, msg))
-	// 	{
-	// 		file.close();
-	// 		return (1);
-	// 	}
-	// 	while (std::getline(file, temp))
-	// 		secondparse(temp, msg);
-	// 	file.close();
-	// 	int method = msg.getMethod();
-	// 	std::cout << "Method is ";
-	// 	if (method == POST)
-	// 		std::cout << "POST";
-	// 	else if (method == GET)
-	// 		std::cout << "GET";
-	// 	else if (method == DELETE)
-	// 		std::cout << "DELETE";
-	// 	else
-	// 		std::cout << "UNIDENTIFIED";
-	// 	std::cout << std::endl;
-	// 	msg.printHeaders();
-	// 	std::cout << "Header connection is " << msg.getHeader("Connection") << std::endl;
-	// }
-	(void) av;
 	if (ac != 2)
 		return (0);
 	lineNum = 0;
 	std::list<ServerSocket *> servers;
-	parseConfig(av[1], servers);
+	if (parseConfig(av[1], servers))
+		return (1);
 	printServers(servers);
 	pruneServers(servers);
-	return (0);
 	server(servers);
 	if (ACustomSocket::epol != -1)
+	{
 		close(ACustomSocket::epol);
+	}
 	std::cout << std::endl << "Program has terminated." << std::endl;
 	return (0);
 }

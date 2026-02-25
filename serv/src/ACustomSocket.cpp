@@ -12,6 +12,10 @@
 
 #include "ACustomSocket.hpp"
 
+std::map<int, ACustomSocket *> ACustomSocket::allSockets;
+
+std::list<ACustomSocket *> ACustomSocket::socketsToFree;
+
 ACustomSocket::ACustomSocket(int typ) : type(typ), sock(-1) {}
 
 ACustomSocket::~ACustomSocket()
@@ -19,18 +23,6 @@ ACustomSocket::~ACustomSocket()
 	if (sock == -1)
 		return ;
 	close(sock);
-}
-
-ACustomSocket::ACustomSocket(const ACustomSocket& t) : type(t.type), sock(t.sock) {}
-
-ACustomSocket&	 ACustomSocket::operator=(const ACustomSocket& t)
-{
-	if (this != &t)
-	{
-		sock = t.sock;
-		type = t.type;
-	}
-	return (*this);
 }
 
 int	ACustomSocket::getSock(void) const
@@ -50,16 +42,17 @@ int ACustomSocket::setNonblock()
 	return (0);
 }
 
-int	ACustomSocket::isClient() const
+int	ACustomSocket::isWhat() const
 {
 	return (type);
 }
 
 int	ACustomSocket::addToEpoll()
 {
-	epo.data.fd = sock;
-	epo.events = EPOLLIN;
-	if (epoll_ctl(epol, EPOLL_CTL_ADD, sock, &epo))
+	struct epoll_event ev;
+	ev.data.fd = sock;
+	ev.events = EPOLLIN;
+	if (epoll_ctl(epol, EPOLL_CTL_ADD, sock, &ev))
 		return (perror("epoll_ctl"), 1);
 	return (0);
 }
@@ -68,7 +61,9 @@ void	ACustomSocket::resetSocket()
 {
 	if (sock == -1)
 		return ;
+	struct epoll_event ev;
+	ev.data.fd = sock;
+	epoll_ctl(epol, EPOLL_CTL_DEL, sock, &ev);
 	close(sock);
-	sock = -1;
 }
 

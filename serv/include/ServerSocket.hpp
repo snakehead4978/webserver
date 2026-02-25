@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:05:52 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/23 03:53:10 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 08:49:07 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -20,8 +20,12 @@
 #include <list>
 #include "parser.hpp"
 #include <set>
-#include <iterator>
 #include "Message.hpp"
+#include <sys/stat.h>
+#include <dirent.h>
+
+class ClientSocket;
+class Cgi;
 
 typedef struct s_locations
 {
@@ -33,6 +37,7 @@ typedef struct s_locations
 	int autoindex;
 	std::list<std::string> index;
 	std::string uploads;
+	std::string path;
 	std::list<std::pair<int, std::string> > errors;
 }	t_locations;
 
@@ -46,6 +51,7 @@ class ServerSocket : public ACustomSocket
 		std::set<int>	portIgnored;
 		std::set<int>	sockets;
 		t_locations *findLocation(std::string &);
+		int	handleDirectory(std::string &, Message *, std::string &, int &, t_locations *, bool &);
 	public:
 		ServerSocket();
 		~ServerSocket();
@@ -59,18 +65,17 @@ class ServerSocket : public ACustomSocket
 		void	resetServerSocket();
 		int		portInfo(int) const;
 		int		checkHostname(std::string &);
-		int		initialChecks(int, int, std::string, int &);
-		int		isCGI(int, std::string &, std::string &);
-		int		fillAnswer(int, bool, std::string &, int);
+		int		initialChecks(int, int, size_t &, t_locations *);
+		int		isCGI(Message *, t_locations *, std::string &, std::string &);
 		void	getTime(std::string &);
-
-		int		fillGet(Message *, std::string &, int &);
-		int		fillPost(Message *, std::string &, int &);
-		int		fillDelete(Message *, std::string &);
-		int		fillError(int, bool, std::string , std::string &);
+		int		fillGet(Message *, std::string &, int &, t_locations *, bool &);
+		int		fillPost(Message *, std::string &, std::string &, t_locations *, bool &);
+		int		fillDelete(Message *, std::string &, t_locations *, bool &);
+		int		fillError(int, Message *, std::string &, int &, t_locations **, bool &);
+		int 	fillAnswer(int status, bool connection, std::string &answer, bool &conn, int contentLength = 0, std::string contentType = "", std::string location = "");
+		int		setLocation(Message *message, t_locations **location);
+		int		fillCgi(t_locations *, std::string &Cgipath, std::string &rootPath, std::string &answer, ClientSocket *, bool &);
+		int		redirected(t_locations *location, std::string &answer, Message *message, bool &);
 };
-
-int	getNumSoft(std::string &word, int &num);
-
 
 #endif

@@ -11,7 +11,7 @@ vpath %.cpp src
 
 OBJ_DIR = obj/
 
-SRC = parser.cpp Message.cpp server.cpp ACustomSocket.cpp ServerSocket.cpp ClientSocket.cpp
+SRC = parser.cpp Message.cpp server.cpp ACustomSocket.cpp ServerSocket.cpp ClientSocket.cpp misc.cpp Cgi.cpp
 
 OBJ = $(addprefix $(OBJ_DIR), $(SRC:.cpp=.o))
 

@@ -6,11 +6,13 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/23 04:11:44 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 08:59:23 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "ServerSocket.hpp"
+#include "ClientSocket.hpp"
+#include "Cgi.hpp"
 
 static void	initLocation(t_locations &location)
 {
@@ -41,7 +43,61 @@ ServerSocket::~ServerSocket()
 	clearLocation(locations);
 	serverSettings.errors.clear();
 	resetServerSocket();
+	if (sock != -1)
+		close(sock);
 	sock = -1;
+}
+
+static const std::string	&getStatusText(int status)
+{
+	static std::map<int, std::string> codes;
+	if (codes.empty())
+	{
+		codes[200] = " OK\r\n";
+		codes[201] = " Created\r\n";
+		codes[204] = " No Content\r\n";
+		codes[301] = " Moved Permanently\r\n";
+		codes[302] = " Found\r\n";
+		codes[307] = " Temporary Redirect\r\n";
+		codes[308] = " Permanent Redirect\r\n";
+		codes[400] = " Bad Request\r\n";
+		codes[403] = " Forbidden\r\n";
+		codes[404] = " Not Found\r\n";
+		codes[405] = " Method Not Allowed\r\n";
+		codes[408] = " Request Timeout\r\n";
+		codes[409] = " Conflict\r\n";
+		codes[413] = " Content Too Large\r\n";
+		codes[415] = " Unsupported Media Type\r\n";
+		codes[500] = " Internal Server Error\r\n";
+		codes[501] = " Not Implemented\r\n";
+		codes[502] = " Bad Gateway\r\n";
+		codes[504] = " Gateway Timeout\r\n";
+		codes[505] = " HTTP Version Not Supported\r\n";
+	}
+	static std::string unknown(" Unknown\r\n");
+	if (codes.count(status))
+		return (codes[status]);
+	return (unknown);
+}
+
+static bool	hasDot(std::string &path)
+{
+	std::stringstream ss(path);
+	std::string segment;
+	while (std::getline(ss, segment, '/'))
+	{
+		if (!segment.empty() && segment[0] == '.')
+			return (true);
+	}
+	return (false);
+}
+
+int	ServerSocket::redirected(t_locations *location, std::string &answer, Message *message, bool &conn)
+{
+	if (location->redirection.second.empty())
+		return (location->redirection.first);
+	fillAnswer(location->redirection.first, message->getConnection(), answer, conn, 0, "", location->redirection.second);
+	return (0);
 }
 
 static int	extractLastWord(std::stringstream &line, std::string &word, bool slashTerminate)
@@ -153,8 +209,8 @@ static int	parseCgi(std::stringstream &s, std::string &word, t_locations *locati
 	std::string extension;
 	if (extractWord(s, word))
 		return (1);
-	if (word != ".py" && word != ".c")
-		return (announceError("Config error: cgi only allows .py and .c"));
+	if (word != ".py" && word != ".c" && word != ".php")
+		return (announceError("Config error: cgi only allows .py and .c and .php"));
 	if (!location->cgi.empty() && location->cgi.count(word))
 		return (announceError(word.assign("Config error: duplicate cgi of extension " + word)));
 	extension = word;
@@ -195,6 +251,8 @@ static int	parseMethod(std::stringstream &s, std::string &word, t_locations *loc
 		word.erase(word.end() - 1);
 		return (getMethod(word, location->methods));
 	}
+	if (getMethod(word, location->methods))
+		return (1);
 	if (!(s >> word))
 		return (announceError("Config error: expected ';'"));
 	if (word[word.size() -1] == ';')
@@ -202,6 +260,8 @@ static int	parseMethod(std::stringstream &s, std::string &word, t_locations *loc
 		word.erase(word.end() - 1);
 		return (getMethod(word, location->methods));
 	}
+	if (getMethod(word, location->methods))
+		return (1);
 	if (!(s >> word))
 		return (announceError("Config error: expected ';'"));
 	if (word[word.size() -1] != ';')
@@ -221,25 +281,6 @@ static int	parseUpload(std::stringstream &s, std::string &word, t_locations *loc
 	if (extractLastWord(s, word, true))
 		return (1);
 	location->uploads = word;
-	return (0);
-}
-
-int	getNumSoft(std::string &word, int &num)
-{
-	int size = word.size();
-	for (int i = 0; i < size; i++)
-	{
-		if (word[i] < '0' || word[i] > '9')
-			return (1);
-	}
-	long number;
-	static std::stringstream ss;
-	ss.clear();
-	ss.str(word);
-	ss >> number;
-	if (number < 0 || number >= 2147483647)
-		return (1);
-	num = (int)number;
 	return (0);
 }
 
@@ -353,6 +394,7 @@ int ServerSocket::fillLocation(std::ifstream &conf, std::stringstream &line)
 			return (1);
 		}
 	}
+	temp.second->path = temp.first;
 	locations.push_back(temp);
 	return (0);
 }
@@ -434,9 +476,11 @@ int	ServerSocket::fillServer(std::ifstream &conf)
 	bool endServer = 0;
 	while (!endServer)
 	{
+		std::cerr << "fillServer calling getNextLine" << std::endl;
 		if (getNextLine(conf, line) || parseServerLine(conf, line, endServer))
 			return (1);		
 	}
+	std::cerr << "fillServer done" << std::endl;
 	return (0);
 }
 
@@ -497,16 +541,10 @@ void	ServerSocket::resetServerSocket()
 	if (sockets.empty())
 		return ;
 	for (std::set<int>::iterator i = sockets.begin(); i != sockets.end(); i++)
-	{
-		epo.data.fd = sock;
-		epoll_ctl(epol, EPOLL_CTL_DEL, sock, &epo);	
 		close(*i);
-	}
 	sockets.clear();
+	sock = -1;
 }
-
-std::list<ACustomSocket *> socketsToFree;
-	std::map<int, ACustomSocket *> allSockets;
 
 int	ServerSocket::startServer(std::list<ACustomSocket *> &socketsToFree, std::map<int, ACustomSocket *> &allSockets)
 {
@@ -514,6 +552,8 @@ int	ServerSocket::startServer(std::list<ACustomSocket *> &socketsToFree, std::ma
 		return (0);
 	for (std::set<int>::iterator i = port.begin(); i != port.end(); i++)
 	{
+		if (portIgnored.count(*i))
+			continue ;
 		sock = socket(AF_INET, SOCK_STREAM, 0);
 		if (sock == -1)
 			return (perror("socket"), 1);
@@ -529,7 +569,7 @@ int	ServerSocket::startServer(std::list<ACustomSocket *> &socketsToFree, std::ma
 		info.sin_port = htons(*i);
 		if (bind(sock, (struct sockaddr *)&info, sizeof(info)) == -1)
 			return (resetServerSocket(), perror("bind"), 1);
-		if (listen(sock, 5) == -1)
+		if (listen(sock, SOMAXCONN) == -1)
 			return (resetServerSocket(), perror("listen"), 1);
 		if (addToEpoll())
 			return (resetServerSocket(), 1);
@@ -557,16 +597,17 @@ void	ServerSocket::checkPorts(std::set<int> &portsInUse)
 			portsInUse.insert(*i);
 		else
 			portIgnored.insert(*i);
+		end = portsInUse.end();
 	}
-	for (std::set<int>::iterator i = portIgnored.begin(); i != portIgnored.end(); i++)
-		portsInUse.erase(*i);
+	if (portIgnored.empty())
+		return ;
 }
 
 int	ServerSocket::portInfo(int _port) const
 {
-	if (port.find(_port) != port.end());
+	if (port.find(_port) != port.end())
 		return (1);
-	if (portIgnored.find(_port) != port.end())
+	if (portIgnored.find(_port) != portIgnored.end())
 		return (2);
 	return (0);
 }
@@ -580,41 +621,48 @@ int	ServerSocket::checkHostname(std::string &host)
 
 t_locations	*ServerSocket::findLocation(std::string &target)
 {
-	int maxsize = 0;
+	size_t	maxsize = 0;
 	t_locations *found = 0;
-	for (std::list<std::pair<std::string, t_locations *> >::iterator i = locations.begin(); i != locations.end(); i++)
+	std::string normTarget = target;
+	if (normTarget.empty() || normTarget[normTarget.size() - 1] != '/')
+		normTarget += "/";
+	if (!locations.empty())
 	{
-		if (target.find(i->first) == 0 && i->first.size() > maxsize)
+		for (std::list<std::pair<std::string, t_locations *> >::iterator i = locations.begin(); i != locations.end(); i++)
+			std::cerr << "location key: [" << i->first << "]" << std::endl;
+		std::cerr << "------\ntarget location: " << normTarget << std::endl;
+		for (std::list<std::pair<std::string, t_locations *> >::iterator i = locations.begin(); i != locations.end(); i++)
 		{
-			maxsize = i->first.size();
-			found = i->second;
+			if (normTarget.find(i->first) == 0 && i->first.size() > maxsize)
+			{
+				maxsize = i->first.size();
+				found = i->second;
+				std::cerr << "matched location: " << i->first << std::endl;
+			}
 		}
 	}
+	std::cerr << "-----------\n\n";
 	if (!found && !serverSettings.root.empty())
 		found = &serverSettings;
 	return (found);
 }
 
-int	ServerSocket::initialChecks(int size, int method, std::string target, int &maxbodysize)
+int	ServerSocket::initialChecks(int size, int method, size_t &maxbodysize, t_locations *toCheck)
 {
-	t_locations *toCheck = findLocation(target);
 	if (!toCheck )
 		return (404);
-	int			tmp;
-	if (size > 0)
+	int			tmp = 0;
+	if (toCheck->client_max_body == -1)
 	{
-		if (toCheck->client_max_body == -1)
-		{
-			if (serverSettings.client_max_body == -1)
-				tmp = MAX_BODY;
-			else
-				tmp = serverSettings.client_max_body;
-		}
+		if (serverSettings.client_max_body == -1)
+			tmp = MAX_BODY;
 		else
-			tmp = toCheck->client_max_body;
-		if (size > tmp)
-			return (413);
+			tmp = serverSettings.client_max_body;
 	}
+	else
+		tmp = toCheck->client_max_body;
+	if (size >= 0 && size > tmp)
+		return (413);
 	maxbodysize = tmp;
 	if (toCheck->methods == -1)
 	{
@@ -626,47 +674,575 @@ int	ServerSocket::initialChecks(int size, int method, std::string target, int &m
 	else
 		tmp = toCheck->methods;
 	if (!(tmp & method))
-		return (405);
+		return (403);
 	return (0);
 }
 
 void	ServerSocket::getTime(std::string &answer)
 {
 	static std::time_t t;
-	static char timeString[std::size("Date: aaa, dd bbb YYYY HH:MM:SS GMT\r\n")];
-	static char *data;
-	static std::size_t size;
-	if (!data)
-	{
-		data = std::data(timeString);
-		size = std::size(timeString);
-	}
+	static char timeString[38]; //std::size("Date: aaa, dd bbb YYYY HH:MM:SS GMT\r\n")];
 	t = std::time(0);
-	std::strftime(data, size, "Date: %a, %d %b %Y %H:%M:%S GMT\r\n", std::gmtime(&t));
+	std::strftime(timeString, sizeof(timeString), "Date: %a, %d %b %Y %H:%M:%S GMT\r\n", std::gmtime(&t));
 	answer.append(timeString);
 }
 
-int	ServerSocket::isCGI(int method, std::string &target, std::string &cgi, std::string &answer)
+static std::string	getDefaultPage(int status)
 {
-	t_locations	*location = findLocation(target);
+	std::string	path = "./default_pages/";
+	path.append(convert(status));
+	path.append(".html");
+	return (path);
+}
+
+static int	getRoot(t_locations *location, t_locations &serverSettings, std::string &root)
+{
+	if (location && !location->root.empty())
+		root = location->root;
+	else
+		root = serverSettings.root;
+	if (root.empty())
+		root.append("./");
+	return (0);
+}
+
+int	ServerSocket::fillError(int error, Message *message, std::string &answer, int &writeFile, t_locations **location, bool &conn)
+{
+	static std::list<std::string> errors;
+	struct stat	statBuf;
+	errors.clear();
+	errors.resize(0);
+	answer.clear();
+	answer.resize(0);
+	if (!*location)
+	{
+		if (message)
+			*location = findLocation(message->getTarget());
+	}
+	if (!*location)
+	{
+		*location = &serverSettings;
+		std::cerr << "test" << (*location)->root.empty() << std::endl;
+	}
+	std::string root;
+	getRoot(*location, serverSettings, root);
+	if (location && !(*location)->errors.empty())
+	{
+		for (std::list<std::pair<int, std::string> >::iterator i = (*location)->errors.begin(); i != (*location)->errors.end(); i++)
+		{
+			if (i->first == error)
+				errors.push_back(i->second);
+		}
+	}
+	if (!serverSettings.errors.empty())
+	{
+		for (std::list<std::pair<int, std::string> >::iterator i = serverSettings.errors.begin(); i != serverSettings.errors.end(); i++)
+		{
+			if (i->first == error)
+				errors.push_back(i->second);
+		}
+	}
+	int fd;
+	if (!errors.empty())
+	{
+		for (std::list<std::string>::iterator i = errors.begin(); i != errors.end(); i++)
+		{
+			fd = open((root + i->substr(1)).c_str(), O_RDONLY);
+			if (fd != -1 && !fstat(fd, &statBuf))
+			{
+				if (!message)
+					fillAnswer(error, false, answer, conn, (int)statBuf.st_size, "text/html");
+				else	
+					fillAnswer(error, message->getConnection(), answer, conn, (int)statBuf.st_size, "text/html");
+				writeFile = fd;
+				return (0);
+			}
+			if (fd != -1)
+				close(fd);
+		}
+	}
+	fd = open(getDefaultPage(error).c_str(), O_RDONLY);
+	if (fd != -1 && fstat(fd, &statBuf) == 0)
+	{
+		if (!message)
+			fillAnswer(error, false, answer, conn, (int)statBuf.st_size, "text/html");
+		else
+			fillAnswer(error, message->getConnection(), answer, conn, (int)statBuf.st_size, "text/html");
+		writeFile = fd;
+		return (0);
+	}
+	if (fd != -1)
+		close(fd);
+	std::string	body = "<html><body><h1>";
+	body.append(convert(error));
+	body.append(getStatusText(error));
+	body.append("</h1></body></html>");
+	if (!message)
+		fillAnswer(error, false, answer, conn, (int)body.size(), "text/html");
+	else
+		fillAnswer(error, message->getConnection(), answer, conn, (int)body.size(), "text/html");
+	answer.append(body);
+	return (0);
+}
+
+static std::string sanitizePath(std::string path)
+{
+	std::vector<std::string> segments;
+	std::stringstream ss(path);
+	std::string segment;
+	while (std::getline(ss, segment, '/'))
+	{
+		if (segment.empty() || segment == ".")
+			continue ;
+		else if (segment == "..")
+		{
+			if (!segments.empty())
+				segments.pop_back();
+		}
+		else
+			segments.push_back(segment);
+	}
+	std::string result;
+	for (std::vector<std::string>::iterator i = segments.begin(); i != segments.end(); i++)
+		result += "/" + *i;
+	if (result.empty())
+		result = "/";
+	return (result);
+}
+
+static std::string	buildFilepath(std::string &root, std::string &target, std::string &locationPath)
+{
+	std::string clean = target;
+	std::string::size_type q = target.find('?');
+	if (q != target.npos)
+		clean = target.substr(0, q);
+	clean = sanitizePath(clean);
+	if (clean.size() >= locationPath.size()
+		&& clean.substr(0, locationPath.size()) == locationPath)
+		return (root + clean.substr(locationPath.size()));
+	if (clean.size() + 1 == locationPath.size()
+		&& locationPath.substr(0, clean.size()) == clean)
+		return (root);
+	return (root + clean.substr(1));
+}
+
+int	ServerSocket::isCGI(Message *message, t_locations *location, std::string &cgiPath, std::string &rootPath)
+{
+	if (!location)
+		return (0);
+	std::string target = message->getTarget();
+	size_t q = target.find('?');
+	if (q != std::string::npos)
+		target = target.substr(0, q);
+	if (hasDot(target))
+		return (0);
+    size_t dot = target.rfind('.');
+    if (dot == std::string::npos)
+        return (0);
+    std::string ext = target.substr(dot);
+	std::cerr << "current ext: " << ext << std::endl;
+	getRoot(location, serverSettings, rootPath);
+	rootPath = buildFilepath(rootPath, message->getTarget(), location->path);
+    if (location->cgi.count(ext))
+    {
+        cgiPath = location->cgi[ext];
+        return (1);
+    }
+    if (serverSettings.cgi.count(ext))
+    {
+        cgiPath = serverSettings.cgi[ext];
+        return (1);
+    }
+    return (0);
+}
+
+static int	extractHeader(std::string &partHeaders, const std::string &key, std::string &value)
+{
+	size_t	start = partHeaders.find(key + ":");
+	if (start == partHeaders.npos)
+		return (1);
+	start += key.size() + 1;
+	size_t	end = partHeaders.find("\r\n", start);
+	std::string	raw = partHeaders.substr(start, end - start);
+	int	first = firstChar(raw);
+	value = raw.substr(first);
+	return (0);
+}
+
+static int	extractFilename(std::string &partHeaders, std::string &filename)
+{
+	std::string	disposition;
+	if (extractHeader(partHeaders, "Content-Disposition", disposition))
+		return (400);
+	size_t	start = disposition.find("filename=");
+	if (start == disposition.npos)
+		return (400);
+	start += 9;
+	size_t	end;
+	if (disposition[start] == '"')
+	{
+		end = disposition.find("\"", ++start);
+		if (end == disposition.npos)
+			return (400);
+		filename = disposition.substr(start, end - start);
+	}
+	else
+	{
+		end = disposition.find_first_of(";\r\n ", start);
+		if (end == disposition.npos)
+			filename = disposition.substr(start);
+		else
+			filename = disposition.substr(start, end - start);
+	}
+	if (filename.empty())
+		return (400);
+	return (0);
+}
+
+static int	checkTransferEncoding(std::string &partHeaders)
+{
+	std::string	header;
+	if (extractHeader(partHeaders, "Content-Transfer-Encoding", header))
+		return (0);
+	if (header != "8bit" && header != "binary" && header != "7bit")
+		return (415);
+	return (0);
+}
+
+static int	extractPartHeaders(std::string &body, std::string &boundary, std::string &partHeaders, size_t &dataStart, size_t searchFrom)
+{
+	size_t	start = body.find(boundary + "\r\n", searchFrom);
+	if (start == body.npos)
+		return (-1);
+	start += boundary.size() + 2;
+	size_t	end = body.find("\r\n\r\n", start);
+	if (end == body.npos)
+		return (400);
+	partHeaders = body.substr(start, end - start);
+	dataStart = end + 4;
+	return (checkTransferEncoding(partHeaders));
+}
+
+static int	extractDataAt(std::string &body, std::string &boundary, std::string &filename, size_t &dataStart, size_t &dataEnd, size_t searchFrom)
+{
+	std::string	partHeaders;
+	int	err = extractPartHeaders(body, boundary, partHeaders, dataStart, searchFrom);
+	if (err)
+		return (err);
+	err = extractFilename(partHeaders, filename);
+	if (err)
+		return (err);
+	dataEnd = body.find("\r\n" + boundary, dataStart);
+	if (dataEnd == body.npos)
+		return (400);
+	return (0);
+}
+
+static int	writeToFile(std::string &filepath, std::string &body, size_t dataStart, size_t dataEnd)
+{
+	struct stat	statBuf;
+	if (stat(filepath.c_str(), &statBuf) == 0)
+		return (409);
+	int	fd = open(filepath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+	if (fd == -1)
+		return (500);
+	if (write(fd, body.c_str() + dataStart, dataEnd - dataStart) == -1)
+	{
+		close(fd);
+		return (500);
+	}
+	close(fd);
+	return (0);
+}
+
+int	ServerSocket::fillPost(Message *message, std::string &answer, std::string &body, t_locations *location, bool &conn)
+{
 	if (!location)
 		return (404);
-	if ();
+	if (location->redirection.first != -1)
+		return (redirected(location, answer, message, conn));
+	if (location->uploads.empty())
+		return (405);
+	if (!message->headerExists("content-type"))
+		return (400);
+	if (message->getHeader("content-type") != "multipart/form-data")
+		return (415);
+	if (message->getContentTypeSize() != 2)
+		return (400);
+	std::string boundary = message->getBoundary();
+	if (setBoundary(boundary))
+		return (400);
+	boundary = "--" + boundary;
+	std::string	closingBoundary = boundary + "--";
+	size_t		searchFrom = 0;
+	size_t		dataStart;
+	size_t		dataEnd;
+	std::string	filename;
+	int			fileCount = 0;
+	int			err;
+	std::cerr << "body size: " << body.size() << std::endl;
+	std::cerr << "body last 100: [" << body.substr(body.size() > 100 ? body.size() - 100 : 0) << "]" << std::endl;
+	std::cerr << "boundary: [" << boundary << "]" << std::endl;
+	std::cerr << "body first 100 chars: [" << body.substr(0, 100) << "]" << std::endl;
+	std::cerr << "closing boundary found: " << (body.find(closingBoundary) != body.npos) << std::endl;
+	while (body.find(closingBoundary, searchFrom) != body.npos)
+	{
+		err = extractDataAt(body, boundary, filename, dataStart, dataEnd, searchFrom);
+		if (err == -1)
+			break ;
+		if (err)
+			return (err);
+		if (hasDot(filename))
+			return (400);
+		if (filename.find('/') != filename.npos)
+			return (400);
+		std::string	filepath = location->uploads + filename;
+		err = writeToFile(filepath, body, dataStart, dataEnd);
+		if (err)
+			return (err);
+		fileCount++;
+		searchFrom = dataEnd + 2;
+	}
+	if (!fileCount)
+		return (400);
+	fillAnswer(201, message->getConnection(), answer, conn);
+	return (0);
 }
 
-int	ServerSocket::
-
-int	ServerSocket::fillGet(Message *message, std::string &target, int &writeFile)
+static std::string	getMimeType(const std::string &path)
 {
-	t_locations *location = findLocation(target);
+	size_t	dot = path.rfind('.');
+	if (dot == path.npos)
+		return ("application/octet-stream");
+	std::string	ext = path.substr(dot);
+	if (ext == ".html" || ext == ".htm")
+		return ("text/html");
+	if (ext == ".css")
+		return ("text/css");
+	if (ext == ".js")
+		return ("application/javascript");
+	if (ext == ".jpg" || ext == ".jpeg")
+		return ("image/jpeg");
+	if (ext == ".png")
+		return ("image/png");
+	if (ext == ".gif")
+		return ("image/gif");
+	if (ext == ".txt")
+		return ("text/plain");
+	if (ext == ".pdf")
+		return ("application/pdf");
+	return ("application/octet-stream");
+}
+
+static int	generateAutoindex(const std::string &dirPath, const std::string &target, std::string &html)
+{
+	DIR	*dir = opendir(dirPath.c_str());
+	if (!dir)
+		return (1);
+	html.append("<html><head><title>Index of ");
+	html.append(target);
+	html.append("</title></head><body><h1>Index of ");
+	html.append(target);
+	html.append("</h1><hr><pre>");
+	struct dirent	*entry;
+	while ((entry = readdir(dir)))
+	{
+		std::string	name(entry->d_name);
+		if (name == ".")
+			continue ;
+		std::string	href = target;
+		if (href[href.size() - 1] != '/')
+			href.push_back('/');
+		href.append(name);
+		html.append("<a href=\"");
+		html.append(href);
+		html.append("\">");
+		html.append(name);
+		html.append("</a>\n");
+	}
+	closedir(dir);
+	html.append("</pre><hr></body></html>");
+	return (0);
+}
+
+int	ServerSocket::handleDirectory(std::string &filepath, Message *message, std::string &answer, int &writeFile, t_locations *location, bool &conn)
+{
+	if (filepath[filepath.size() - 1] != '/')
+		filepath.push_back('/');
+	std::list<std::string>	indexFiles;
+	if (!location->index.empty())
+	{
+		for (std::list<std::string>::iterator i = location->index.begin(); i != location->index.end(); i++)
+			indexFiles.push_back(*i);
+	}
+	if (!serverSettings.index.empty())
+	{
+		for (std::list<std::string>::iterator i = serverSettings.index.begin(); i != serverSettings.index.end(); i++)
+			indexFiles.push_back(*i);
+	}
+	struct stat	statBuf;
+	if (!indexFiles.empty())
+	{
+		for (std::list<std::string>::iterator i = indexFiles.begin(); i != indexFiles.end(); i++)
+		{
+			std::string	indexPath = filepath + *i;
+			if (stat(indexPath.c_str(), &statBuf) == 0 && S_ISREG(statBuf.st_mode))
+			{
+				int	fd = open(indexPath.c_str(), O_RDONLY);
+				if (fd == -1)
+					return (403);
+				fillAnswer(200, message->getConnection(), answer, conn, (int)statBuf.st_size, getMimeType(indexPath));
+				writeFile = fd;
+				return (0);
+			}
+		}
+	}
+	if (location->autoindex == 1 || (location->autoindex == -1 && serverSettings.autoindex == 1))
+	{
+		std::string	html;
+		generateAutoindex(filepath, message->getTarget(), html);
+		if (html.empty())
+			return (403);
+		fillAnswer(200, message->getConnection(), answer, conn, (int)html.size(), "text/html");
+		answer.append(html);
+		return (0);
+	}
+	return (403);
+}
+
+int	ServerSocket::fillGet(Message *message, std::string &answer, int &writeFile, t_locations *location, bool &conn)
+{
 	if (!location)
 		return (404);
-	std::string toSearch;
+	if (location->redirection.first != -1)
+		return (redirected(location, answer, message, conn));
+	std::string root;
+	std::string target = message->getTarget();
+	getRoot(location, serverSettings, root);
+	if (root[root.size() - 1] != '/')
+		root += "/";
+	struct stat statBuf;
+	if (hasDot(target))
+		return (404);
+	std::string filepath = buildFilepath(root, target, location->path);
+	std::cerr << "target is : [" << message->getTarget() << "]" << std::endl; 
+	std::cerr << "filepath: [" << filepath << "]" << std::endl;
+	if (stat(filepath.c_str(), &statBuf) == -1)
+		return (404);
+	if (S_ISDIR(statBuf.st_mode))
+	{
+		std::cerr << "IS DIR, target last char: [" << target[target.size() - 1] << "]" << std::endl;
+		if (target[target.size() - 1] != '/')
+			return (fillAnswer(301, message->getConnection(), answer, conn, 0, "", target + "/"));
+		return (handleDirectory(filepath, message, answer, writeFile, location, conn));
+	}
+	if (!S_ISREG(statBuf.st_mode))
+		return (403);
+	int fd = open(filepath.c_str(), O_RDONLY);
+	if (fd == -1)
+		return (403);
+	fillAnswer(200, message->getConnection(), answer, conn, (int)statBuf.st_size, getMimeType(filepath));
+	writeFile = fd;
+	return (0);
 }
 
-int	ServerSocket::fillAnswer(int method, bool connection, std::string &target, int writeFile, std::string &answer)
+static bool	forceClose(int error)
 {
-	
+	static std::set<int> errors;
+	if (errors.empty())
+	{
+		errors.insert(400);
+		errors.insert(408);
+		errors.insert(413);
+		errors.insert(500);
+		errors.insert(501);
+		errors.insert(505);
+	}
+	if (errors.find(error) == errors.end())
+		return (false);
+	return (true);
 }
-	//	check = myServer.fillAnswer(message->getMethod(), message->getConnection(), message->getTarget(), writeFile);
 
+int ServerSocket::fillAnswer(int status, bool connection, std::string &answer, bool &conn, int contentLength, std::string contentType, std::string location)
+{
+	answer.append("HTTP/1.1 ");
+	answer.append(convert(status));
+	answer.append(getStatusText(status));
+	answer.append("Server: webserver/1.0\r\n");
+	getTime(answer);
+	if (forceClose(status))
+	{
+		conn = false;
+		connection = false;
+	}
+	else
+		conn = connection;
+	if (connection)
+		answer.append("Connection: keep-alive\r\n");
+	else
+		answer.append("Connection: close\r\n");
+	if (!location.empty())
+	{
+		answer.append("Location: ");
+		answer.append(location);
+		answer.append("\r\n");
+	}
+	if (status == 204)
+	{
+		answer.append("\r\n");
+		return (0);
+	}
+	if (!contentType.empty())
+	{
+		answer.append("Content-Type: ");
+		answer.append(contentType);
+		answer.append("\r\n");
+	}
+	answer.append("Content-Length: ");
+	answer.append(convert(contentLength));
+	answer.append("\r\n\r\n");
+	std::cerr << "Current answer: \n*********************\n" << answer << std::endl << "*********************\n\n";
+	return (0);
+}
+
+int	ServerSocket::setLocation(Message *message, t_locations **location)
+{
+	*location = findLocation(message->getTarget());
+	return (0);
+}
+
+int	ServerSocket::fillDelete(Message *message, std::string &answer, t_locations *location, bool &conn)
+{
+	if (!location)
+		return (404);
+	if (location->redirection.first != -1)
+		return (redirected(location, answer, message, conn));
+	std::string	root;
+	getRoot(location, serverSettings, root);
+	if (hasDot(message->getTarget()))
+		return (404);
+	std::string filepath = buildFilepath(root, message->getTarget(), location->path);
+	struct stat	statBuf;
+	if (stat(filepath.c_str(), &statBuf) == -1)
+		return (404);
+	if (!S_ISREG(statBuf.st_mode))
+		return (403);
+	if (access(filepath.c_str(), W_OK) == -1)
+		return (403);
+	if (unlink(filepath.c_str()) == -1)
+		return (500);
+	fillAnswer(204, message->getConnection(), answer, conn);
+	return (0);
+}
+
+int		ServerSocket::fillCgi(t_locations *location, std::string &Cgipath, std::string &rootPath, std::string &answer, ClientSocket *client, bool &conn)
+{
+	if (!location)
+		return (404);
+	if (location->redirection.first != -1)
+		return (redirected(location, answer, client->getMessage(), conn));
+	client->createCgi(Cgipath, rootPath);
+	if (client->startCgi())
+		return (500);
+	return (0);
+}

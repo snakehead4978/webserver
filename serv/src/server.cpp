@@ -6,14 +6,14 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 12:00:55 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/21 10:15:52 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 09:34:01 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "parser.hpp"
 #include "ServerSocket.hpp"
 #include "ClientSocket.hpp"
-#include "server.hpp"
+#include "Cgi.hpp"
 
 int signum = 0;
 
@@ -29,7 +29,7 @@ void signalSetup()
 	signal(SIGINT, killServer);
 }
 
-int handleClient(ClientSocket *client, std::map<int, ACustomSocket *> allSockets, std::list<ACustomSocket *> &socketsToFree)
+static int handleClient(ClientSocket *client)
 {
 	static std::string	headData(HEAD_BUFF, 0);
 	static std::string	maxHeadData(MAX_HEAD_BUFF, 0);
@@ -39,7 +39,6 @@ int handleClient(ClientSocket *client, std::map<int, ACustomSocket *> allSockets
 	std::string *readBuff;
 	if (client->timedOut)
 		return (client->timeout());
-	std::cout << "Hi my socket is " << client->getSock() << std::endl;
 	if (!client->isHeader())
 	{
 		readBuff = &bodyData;	
@@ -55,7 +54,6 @@ int handleClient(ClientSocket *client, std::map<int, ACustomSocket *> allSockets
 		readBuff = &headData;	
 		readSize = HEAD_BUFF - 1;
 	}
-	std::cout << "head buff count is " << readSize << std::endl;
 	readBuff->assign(readSize, 0);
 	errcheck = read(client->getSock(), &(*readBuff)[0], readSize);
 	if (errcheck <= 0)
@@ -66,7 +64,7 @@ int handleClient(ClientSocket *client, std::map<int, ACustomSocket *> allSockets
 			std::cerr << "Client has disconnected" << std::endl;
 		return (1);
 	}
-	client->addToRequest(*readBuff);
+	client->addToRequest(*readBuff, errcheck);
 	if (client->handleRequest())
 	{
 		std::cout << "Client out" << std::endl;
@@ -75,51 +73,64 @@ int handleClient(ClientSocket *client, std::map<int, ACustomSocket *> allSockets
 	return (0);
 }
 
-void	closeAllSockets(std::list<ACustomSocket *> &allSockets)
+static void	closeAllSockets(std::list<ACustomSocket *> &allSockets)
 {
+	if (allSockets.empty())
+		return ;
 	for (std::list<ACustomSocket *>::iterator i = allSockets.begin(); i != allSockets.end(); i++)
 		delete (*i);
 }
 
-int	addClient(ServerSocket *server, std::map<int, ACustomSocket *> &allSockets, std::list<ACustomSocket *> &socketsToFree)
+static int	addClient(ServerSocket *server, std::list<ACustomSocket *> &socketsToFree, int serverFd)
 {
 	struct sockaddr_in	addr;
 	socklen_t	addrlen = sizeof(addr);
 	
-	ClientSocket *firefox = new ClientSocket(accept(server->getSock(), (struct sockaddr *)&addr, &addrlen));
+	ClientSocket *firefox = new ClientSocket(accept(serverFd, (struct sockaddr *)&addr, &addrlen));
 	if (firefox->getSock() == -1)
 	{
 		delete firefox;
 		return (1);
 	}
+	getsockname(serverFd, (struct sockaddr *)&addr, &addrlen);
 	int port = ntohs(addr.sin_port);
-	firefox->firstCheck(port, socketsToFree);
-	allSockets[firefox->getSock()] = firefox;
+	firefox->firstCheck(port, socketsToFree, server);
+	server->allSockets[firefox->getSock()] = firefox;
 	socketsToFree.push_back(firefox);
 	return (0);
 }
 
 int	ACustomSocket::epol = -1;
-struct epoll_event ACustomSocket::epo = {events: 0, data: 0};
 
-static int removeSocketFromLists(ACustomSocket *socket, std::list<ACustomSocket *> &socketsToFree, std::map<int, ACustomSocket *> &allSockets)
+static int removeSocketFromLists(ACustomSocket *socket, std::list<ACustomSocket *> &socketsToFree)
 {
-	allSockets.erase(socket->getSock());
+	std::cerr << "removing fd=" << socket->getSock() << " type=" << socket->isWhat() << std::endl;
+	ACustomSocket::allSockets.erase(socket->getSock());
 	socketsToFree.remove(socket);
 	delete socket;
 	return (1);
 }
 
-static void	timeoutCheck(std::map<int, ACustomSocket *> &allSockets, std::list<ACustomSocket *> &socketsToFree)
+static void	timeoutCheck(std::list<ACustomSocket *> &socketsToFree)
 {
+	std::vector<ACustomSocket *> toRemove;
 	for (std::list<ACustomSocket *>::iterator i = socketsToFree.begin(); i != socketsToFree.end(); i++)
 	{
-		if ((*i)->isClient() && ((ClientSocket *)(*i))->checkTime())
-		{
-			removeSocketFromLists(*i, socketsToFree, allSockets);
-			timeoutCheck(allSockets, socketsToFree);
-			return ;
-		}
+		if ((*i)->isWhat() == CLIENT && ((ClientSocket *)(*i))->checkTime())
+			toRemove.push_back(*i);
+	}
+	for (std::vector<ACustomSocket *>::iterator i = toRemove.begin(); i != toRemove.end(); i++)
+		removeSocketFromLists(*i, socketsToFree);
+	toRemove.clear();
+	for (std::map<int, ACustomSocket *>::iterator i = ACustomSocket::allSockets.begin(); i != ACustomSocket::allSockets.end(); i++)
+	{
+		if (i->second->isWhat() == CGI && ((Cgi *)i->second)->checkTime())
+			toRemove.push_back(i->second);
+	}
+	for (std::vector<ACustomSocket *>::iterator i = toRemove.begin(); i != toRemove.end(); i++)
+	{
+		((Cgi *)*i)->sendTimeout();
+		delete *i;
 	}
 }
 
@@ -129,49 +140,69 @@ int	server(std::list<ServerSocket *>&servers)
 	ACustomSocket::epol = epoll_create(1);
 	if (ACustomSocket::epol == -1)
 		return (perror("epoll_create"), 1);
-	std::list<ACustomSocket *> socketsToFree;
-	std::map<int, ACustomSocket *> allSockets;
+	if (servers.empty())
+		return (1);
 	for (std::list<ServerSocket *>::iterator i = servers.begin(); i != servers.end(); i++)
 	{
-		if ((*i)->startServer(socketsToFree, allSockets))
+		if ((*i)->startServer(ACustomSocket::socketsToFree, ACustomSocket::allSockets))
 			return (clearServers(servers), 1);
 	}
-	struct epoll_event events[5];
+	struct epoll_event events[10];
 	int nEvents;
 	std::map<int, ACustomSocket *>::iterator found;
 	while (1)
 	{
-		nEvents = epoll_wait(ACustomSocket::epol, events, 5, 0);
+		nEvents = epoll_wait(ACustomSocket::epol, events, MAX_EVENTS, 100);
 		if (signum == 1)
 			break ;
 		for (int i = 0; i < nEvents; i++)
 		{
-			found = allSockets.find(events[i].data.fd);
-			if (found->second->isClient())
+			found = ACustomSocket::allSockets.find(events[i].data.fd);
+			if (found == ACustomSocket::allSockets.end())
+				continue ;
+			if (found->second->isWhat() == CLIENT)
 			{
+				if (events[i].events & (EPOLLHUP | EPOLLERR))
+				{
+					removeSocketFromLists(found->second, ACustomSocket::socketsToFree);
+					continue ;
+				}
 				if (events[i].events & EPOLLIN)
 				{
-					if (handleClient((ClientSocket *)found->second, allSockets, socketsToFree))
-						removeSocketFromLists(found->second, socketsToFree, allSockets);
+					if (handleClient((ClientSocket *)found->second))
+						removeSocketFromLists(found->second, ACustomSocket::socketsToFree);
 				}
 				else
 				{
-					std::cout << "IM writing" << std::endl;
 					if (((ClientSocket *)found->second)->handleWrite())
 					{
 						std::cout << "Client out" << std::endl;
-						removeSocketFromLists(found->second, socketsToFree, allSockets);
+						removeSocketFromLists(found->second, ACustomSocket::socketsToFree);
 					}
 				}
 			}
-			else
+			else if (found->second->isWhat() == OWNER)
 			{
-				if (addClient((ServerSocket *)found->second, allSockets, socketsToFree))
+				if (addClient((ServerSocket *)found->second, ACustomSocket::socketsToFree, found->first))
 					perror("epoll_ctl");
 			}
+			else
+			{
+				Cgi *cgi = (Cgi *)found->second;
+				if (events[i].events & (EPOLLIN | EPOLLHUP | EPOLLERR))
+				{
+					if (cgi->handleRead())
+						delete cgi;
+				}
+				else if (events[i].events & EPOLLOUT)
+				{
+					if (cgi->handleWrite())
+						delete cgi;	
+				}
+			}
 		}
-		timeoutCheck(allSockets, socketsToFree);
+		timeoutCheck(ACustomSocket::socketsToFree);
 	}
-	closeAllSockets(socketsToFree);
+	closeAllSockets(ACustomSocket::socketsToFree);
 	return (1);
 }
