@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/23 01:00:25 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/24 14:31:34 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 09:53:08 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -41,7 +41,7 @@ class Cgi : public ACustomSocket
 		bool	cleaned;
 		int	buildEnv();
 	public:
-		Cgi(ClientSocket *client, std::string &, std::string &, std::string &);
+		Cgi(ClientSocket *client, std::string &, std::string , std::string &);
 		~Cgi();
 		int	execute();
 		int handleRead();

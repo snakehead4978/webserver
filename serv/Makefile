@@ -1,4 +1,4 @@
-NAME = parser
+NAME = webserv
 
 CC = c++
 
@@ -39,7 +39,7 @@ test: re
 
 valg: re
 	clear
-	valgrind ./$(NAME)
+	valgrind --track-fds=all --leak-check=full --show-leak-kinds=all  ./$(NAME)
 
 .PHONY: all clean fclean re valg test
 

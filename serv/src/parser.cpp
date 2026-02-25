@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/09 18:46:02 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 08:52:06 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 10:40:06 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -116,7 +116,7 @@ int	parseConfig(std::string filename, std::list<ServerSocket *> &servers)
 {
 	std::ifstream conf(filename.c_str(), std::ios::binary);
 	if (!conf.is_open())
-		return (1);
+		return (perror("ifstream"), 1);
 	std::string line;
 	while (std::getline(conf, line))
 	{
@@ -150,20 +150,26 @@ static void pruneServers(std::list<ServerSocket *> &servers)
 
 int	main(int ac, char **av)
 {
-	std::cout << std::endl << "Hi program has started, Good Luck!" << std::endl;
-	if (ac != 2)
-		return (0);
+	std::cout << "Hi program has started, Good Luck!" << std::endl;
+	if (!ac || ac > 2)
+	{
+		std::cerr << "Invalid arguments" << std::endl;
+		return (1);
+	}
 	lineNum = 0;
 	std::list<ServerSocket *> servers;
-	if (parseConfig(av[1], servers))
+	std::string filepath;
+	if (ac == 2)
+		filepath = av[1];
+	else
+		filepath = "./conf/server2.conf";
+	if (parseConfig(filepath, servers))
 		return (1);
 	printServers(servers);
 	pruneServers(servers);
-	server(servers);
+	int err = server(servers);
 	if (ACustomSocket::epol != -1)
-	{
 		close(ACustomSocket::epol);
-	}
 	std::cout << std::endl << "Program has terminated." << std::endl;
-	return (0);
+	return (err);
 }

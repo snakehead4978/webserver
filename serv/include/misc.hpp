@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/23 10:47:08 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 07:34:23 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 10:58:30 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -23,7 +23,7 @@
 # define BODY_BUFF 16000
 # define MAX_BODY 1000000
 # define MAX_EVENTS 64
-
+# define DEFAULT_PORT 3030
 
 enum
 {

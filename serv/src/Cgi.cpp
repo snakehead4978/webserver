@@ -6,18 +6,42 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/23 01:01:21 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 09:31:58 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 12:36:18 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Cgi.hpp"
 #include "ClientSocket.hpp"
 
-Cgi::Cgi(ClientSocket *_client, std::string &_inter, std::string &_path, std::string &_port) : ACustomSocket(CGI), inter(_inter), path(_path), port(_port)
+#include <execinfo.h>
+
+static void traced_close(int fd, const char *loc)
 {
+    if (fd == -1)
+    {
+        void *bt[10];
+        int n = backtrace(bt, 10);
+        char **syms = backtrace_symbols(bt, n);
+        std::cerr << "close(-1) called from " << loc << std::endl;
+        for (int i = 0; i < n; i++)
+            std::cerr << syms[i] << std::endl;
+        free(syms);
+        return ;
+    }
+    close(fd);
+}
+
+#define close(fd) traced_close(fd, __FUNCTION__)
+
+Cgi::Cgi(ClientSocket *_client, std::string &_inter, std::string _path, std::string &_port) : ACustomSocket(CGI)
+{
+	inter = _inter; 
+	path = _path;
+	port = _port;
 	sock = -1;
 	sockWrite = -1;
 	client = _client;
+	offset = 0;
 	pid = -1;
 	pipeIn[0] = -1;
 	pipeIn[1] = -1;
@@ -31,9 +55,7 @@ Cgi::~Cgi()
 	if (pid > 0)
 	{
 		kill(pid, SIGKILL);
-		std::cerr << "waiting for pid " << pid << std::endl;
 		waitpid(pid, NULL, 0);
-		std::cerr << "waitpid done" << std::endl;
 	}
 	if (sock != -1)
     {
@@ -117,7 +139,6 @@ static int	chdirToScript(std::string &path, std::string &scriptName)
 	if (getcwd(cwd, PATH_MAX) == NULL)
 		return (1);
 	std::string::size_type slash = path.rfind('/');
-	std::cerr << "chdir target: [" << (slash != path.npos ? path.substr(0, slash) : "NO SLASH") << "]" << std::endl;
 	scriptName = path;
 	if (slash != path.npos)
 	{
@@ -125,10 +146,7 @@ static int	chdirToScript(std::string &path, std::string &scriptName)
 		if (dir[0] != '/')
 			dir = std::string(cwd) + "/" + dir;
 		if (chdir(dir.c_str()) == -1)
-		{
-			std::cerr << "chdir failed: " << strerror(errno) << " on [" << path.substr(0, slash) << "]" << std::endl;
 			return (1);
-		}
 		scriptName = path.substr(slash + 1);
 	}
 	return (0);
@@ -190,7 +208,6 @@ int	Cgi::buildEnv()
 	env.push_back((char *)contentLengthEnv.c_str());
 	env.push_back((char *)scriptEnv.c_str());
 	env.push_back((char *)queryEnv.c_str());
-	env.push_back((char *)contentTypeEnv.c_str());
 	env.push_back((char *)requestUriEnv.c_str());
 	env.push_back((char *)pathInfoEnv.c_str());
 	env.push_back((char *)"GATEWAY_INTERFACE=CGI/1.1");
@@ -198,15 +215,29 @@ int	Cgi::buildEnv()
 	env.push_back((char *)"REDIRECT_STATUS=200");
 	env.push_back((char *)portEnv.c_str());
 	env.push_back((char *)addrEnv.c_str());
+	try
+	{
+		const std::list<std::string> &ctList = client->getMessage()->getHeaders("content-type");
+		std::string ct;
+		for (std::list<std::string>::const_iterator it = ctList.begin(); it != ctList.end(); it++)
+		{
+			if (!ct.empty()) ct += "; ";
+			ct += *it;
+		}
+		contentTypeEnv = "CONTENT_TYPE=" + ct;
+	}
+	catch (const std::exception &e)
+	{
+		(void)e;
+		contentTypeEnv = "CONTENT_TYPE=";
+	}
+	env.push_back((char *)contentTypeEnv.c_str());
 	if (!httpHeaders.empty())
 	{
 		for (std::vector<std::string>::iterator it = httpHeaders.begin(); it != httpHeaders.end(); it++)
 			env.push_back((char *)it->c_str());
 	}
 	env.push_back(NULL);
-	std::cerr << "current script name " << scriptEnv << std::endl;
-	std::cerr << "execve: inter=[" << argv[0] << "] path=[" << argv[1] << "]" << std::endl;
-	cgiExit(false);
 	execve(inter.c_str(), argv, &env[0]);
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
@@ -226,13 +257,13 @@ int	Cgi::execute()
 		close(pipeIn[1]);
 		close(pipeOut[0]);
 		if (dup2(pipeIn[0], STDIN_FILENO) == -1)
-			cgiExit();
+			return (-10);
 		if (dup2(pipeOut[1], STDOUT_FILENO) == -1)
-			cgiExit();
+			return (-10);
 		close(pipeIn[0]);
 		close(pipeOut[1]);
 		buildEnv();
-		cgiExit();
+		return (-10);
 	}
 	time = std::time(0);
 	close(pipeIn[0]);
@@ -261,7 +292,8 @@ int	Cgi::execute()
 		}
 		allSockets[sockWrite] = this;
 	}
-	close(pipeIn[1]);
+	if (pipeIn[1] != -1)
+		close(pipeIn[1]);
 	pipeIn[1] = -1;
 	sock = pipeOut[0];
 	pipeOut[0] = -1;
@@ -277,7 +309,6 @@ int	Cgi::execute()
 		sock = -1;
 		return (std::cerr << "epoll failed\n", 500);
 	}
-	std::cerr << "execute success sock= " << sock << std::endl;
 	allSockets[sock] = this;
 	client->turnCgi(false);
 	return (0);
@@ -300,7 +331,6 @@ int	Cgi::handleRead()
 	char	buf[OUTPUT_BUFF];
 	bzero(buf, OUTPUT_BUFF);
 	int n = read(sock, buf, OUTPUT_BUFF);
-	std::cerr << "CGI handleRead n=" << n << " answer so far=" << client->getAnswer().size() << std::endl;
 	if (n == -1)
 	{
 		client->cgiError(500);
@@ -325,12 +355,7 @@ int	Cgi::handleRead()
 			client->cgiError(500);
 			return (1);
 		}
-		std::cerr << "raw answer: [" << client->getAnswer() << "]" << std::endl;
 		normalizeCrlf(client->getAnswer());
-		std::cerr << "after normalize: [" << client->getAnswer() << "]" << std::endl;
-		std::cerr << "CGI answer: [" << client->getAnswer() << "]" << std::endl;
-		std::string::size_type split = client->getAnswer().find("\r\n\r\n");
-		std::cerr << "split pos: " << split << " answer size: " << client->getAnswer().size() << std::endl;
 		std::string statusLine = "HTTP/1.1 200 OK\r\n";
 		std::string::size_type statusPos = client->getAnswer().find("Status:");
 		if (statusPos != std::string::npos)
@@ -348,16 +373,11 @@ int	Cgi::handleRead()
 			client->cgiError(502);
 			return (1);
 		}
-		std::cerr << "final answer: [" << client->getAnswer().substr(0, 200) << "]" << std::endl;
 		client->setConnection(client->getMessage()->getConnection());
 		client->resetRead();
 		return (1);
 	}
 	client->appendAnswer(buff);
-	std::cerr << "appended bytes: ";
-	for (int i = 0; i < n; i++)
-		std::cerr << (int)(unsigned char)buf[i] << " ";
-	std::cerr << std::endl;
 	return (0);
 }
 
@@ -377,6 +397,8 @@ void	Cgi::sendTimeout()
 
 int	Cgi::handleWrite()
 {
+	if (sockWrite == -1)
+		return (500);
 	std::string &body = client->getBody();
 	int n = write(sockWrite, body.c_str() + offset, body.size() - offset);
 	if (n <= 0)

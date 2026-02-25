@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 08:59:23 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 12:22:32 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -476,11 +476,9 @@ int	ServerSocket::fillServer(std::ifstream &conf)
 	bool endServer = 0;
 	while (!endServer)
 	{
-		std::cerr << "fillServer calling getNextLine" << std::endl;
 		if (getNextLine(conf, line) || parseServerLine(conf, line, endServer))
 			return (1);		
 	}
-	std::cerr << "fillServer done" << std::endl;
 	return (0);
 }
 
@@ -585,10 +583,11 @@ void	ServerSocket::checkPorts(std::set<int> &portsInUse)
 	std::set<int>::iterator end = portsInUse.end();
 	if (port.empty())
 	{
-		if (portsInUse.find(80) == end)
-			portsInUse.insert(80);
+		port.insert(DEFAULT_PORT);
+		if (portsInUse.find(DEFAULT_PORT) == end)
+			portsInUse.insert(DEFAULT_PORT);
 		else
-			portIgnored.insert(80);
+			portIgnored.insert(DEFAULT_PORT);
 		return ;
 	}
 	for (std::set<int>::iterator i = port.begin(); i != port.end(); i++)
@@ -629,19 +628,14 @@ t_locations	*ServerSocket::findLocation(std::string &target)
 	if (!locations.empty())
 	{
 		for (std::list<std::pair<std::string, t_locations *> >::iterator i = locations.begin(); i != locations.end(); i++)
-			std::cerr << "location key: [" << i->first << "]" << std::endl;
-		std::cerr << "------\ntarget location: " << normTarget << std::endl;
-		for (std::list<std::pair<std::string, t_locations *> >::iterator i = locations.begin(); i != locations.end(); i++)
 		{
 			if (normTarget.find(i->first) == 0 && i->first.size() > maxsize)
 			{
 				maxsize = i->first.size();
 				found = i->second;
-				std::cerr << "matched location: " << i->first << std::endl;
 			}
 		}
 	}
-	std::cerr << "-----------\n\n";
 	if (!found && !serverSettings.root.empty())
 		found = &serverSettings;
 	return (found);
@@ -720,10 +714,7 @@ int	ServerSocket::fillError(int error, Message *message, std::string &answer, in
 			*location = findLocation(message->getTarget());
 	}
 	if (!*location)
-	{
 		*location = &serverSettings;
-		std::cerr << "test" << (*location)->root.empty() << std::endl;
-	}
 	std::string root;
 	getRoot(*location, serverSettings, root);
 	if (location && !(*location)->errors.empty())
@@ -840,7 +831,6 @@ int	ServerSocket::isCGI(Message *message, t_locations *location, std::string &cg
     if (dot == std::string::npos)
         return (0);
     std::string ext = target.substr(dot);
-	std::cerr << "current ext: " << ext << std::endl;
 	getRoot(location, serverSettings, rootPath);
 	rootPath = buildFilepath(rootPath, message->getTarget(), location->path);
     if (location->cgi.count(ext))
@@ -980,11 +970,6 @@ int	ServerSocket::fillPost(Message *message, std::string &answer, std::string &b
 	std::string	filename;
 	int			fileCount = 0;
 	int			err;
-	std::cerr << "body size: " << body.size() << std::endl;
-	std::cerr << "body last 100: [" << body.substr(body.size() > 100 ? body.size() - 100 : 0) << "]" << std::endl;
-	std::cerr << "boundary: [" << boundary << "]" << std::endl;
-	std::cerr << "body first 100 chars: [" << body.substr(0, 100) << "]" << std::endl;
-	std::cerr << "closing boundary found: " << (body.find(closingBoundary) != body.npos) << std::endl;
 	while (body.find(closingBoundary, searchFrom) != body.npos)
 	{
 		err = extractDataAt(body, boundary, filename, dataStart, dataEnd, searchFrom);
@@ -1125,13 +1110,10 @@ int	ServerSocket::fillGet(Message *message, std::string &answer, int &writeFile,
 	if (hasDot(target))
 		return (404);
 	std::string filepath = buildFilepath(root, target, location->path);
-	std::cerr << "target is : [" << message->getTarget() << "]" << std::endl; 
-	std::cerr << "filepath: [" << filepath << "]" << std::endl;
 	if (stat(filepath.c_str(), &statBuf) == -1)
 		return (404);
 	if (S_ISDIR(statBuf.st_mode))
 	{
-		std::cerr << "IS DIR, target last char: [" << target[target.size() - 1] << "]" << std::endl;
 		if (target[target.size() - 1] != '/')
 			return (fillAnswer(301, message->getConnection(), answer, conn, 0, "", target + "/"));
 		return (handleDirectory(filepath, message, answer, writeFile, location, conn));
@@ -1201,7 +1183,6 @@ int ServerSocket::fillAnswer(int status, bool connection, std::string &answer, b
 	answer.append("Content-Length: ");
 	answer.append(convert(contentLength));
 	answer.append("\r\n\r\n");
-	std::cerr << "Current answer: \n*********************\n" << answer << std::endl << "*********************\n\n";
 	return (0);
 }
 
@@ -1242,7 +1223,10 @@ int		ServerSocket::fillCgi(t_locations *location, std::string &Cgipath, std::str
 	if (location->redirection.first != -1)
 		return (redirected(location, answer, client->getMessage(), conn));
 	client->createCgi(Cgipath, rootPath);
-	if (client->startCgi())
+	int err = client->startCgi();
+	if (err == -10)
+		return (-10);
+	if (err)
 		return (500);
 	return (0);
 }

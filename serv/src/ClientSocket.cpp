@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 07:53:35 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 12:27:24 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -33,6 +33,7 @@ ClientSocket::ClientSocket(int soc) : ACustomSocket(CLIENT)
 	location = 0;
 	connection = false;
 	maxBodySize = MAX_BODY;
+	readTo = 0;
 	if (sock == -1)
 	{
 		perror("accept");
@@ -43,7 +44,7 @@ ClientSocket::ClientSocket(int soc) : ACustomSocket(CLIENT)
 		resetSocket();
 		return ;
 	}
-	std::cout << "Client created and my server is and my socket is " << sock << std::endl;
+	// std::cout << "Client " << sock << " connected" << std::endl;
 }
 
 ClientSocket::~ClientSocket()
@@ -65,7 +66,6 @@ void	ClientSocket::addToRequest(std::string &str, int read)
 
 int	ClientSocket::fillFirstBody()
 {
-	std::cerr << sock << " filling first body with method " << message->getMethod() << std::endl;
 	int checks = message->finalChecks();
 	if (checks)
 		return (setError(checks));
@@ -84,7 +84,6 @@ int	ClientSocket::fillFirstBody()
 		return (setError(checks));
 	if (!(message->getMethod() & POST))
 	{
-		std::cerr << "method is not POST\n";
 		readDone = true;
 		return (0);
 	}
@@ -97,7 +96,7 @@ int	ClientSocket::fillHeaders()
 	std::string::size_type n = request.find("\r\n\r\n");
 	if (n != request.npos)
 		header = false;
-	if (readTo == n)
+	if (readTo == n && !message->headerExists("host"))
 		return (setError(400));
 	std::string::size_type readNext;
 	int	err;
@@ -106,7 +105,6 @@ int	ClientSocket::fillHeaders()
 	{
 		std::string a = request.substr(readTo + 2, readNext - readTo - 2);
 		err = message->parseLine(a);
-		std::cerr << "line to parse and size :" << a << " " << a.size() << std::endl;
 		if (err)
 			return (setError(err));
 		readTo = readNext;
@@ -176,7 +174,6 @@ int	ClientSocket::switchToRead()
 	request = start;
 	readTo = 0;
 	nRead = 0;
-	std::cerr << sock << "switched to read" << std::endl;
 	struct epoll_event ev;
 	ev.data.fd = sock;
 	ev.events = EPOLLIN;
@@ -200,23 +197,26 @@ int	ClientSocket::turnCgi(bool on)
 	ev.events = EPOLLOUT;
 	if (on)
 	{
-		std::cerr << "client try to readd CGI" << std::endl;
-		if (epoll_ctl(epol, EPOLL_CTL_ADD, sock, &ev))
-			return (perror("epoll_ctl"), 1);
+		int ret = epoll_ctl(epol, EPOLL_CTL_ADD, sock, &ev);
+		if (ret)
+		{
+			if (errno == EEXIST)
+				epoll_ctl(epol, EPOLL_CTL_MOD, sock, &ev);
+			else
+				return (perror("epoll_ctl"), 1);
+		}
 	}
 	else
 	{
-		std::cerr << "client try to remove CGI" << std::endl;
-		if (epoll_ctl(epol, EPOLL_CTL_DEL, sock, &ev) && errno != ENOENT)
+		int ret = epoll_ctl(epol, EPOLL_CTL_DEL, sock, &ev);
+		if (ret && errno != ENOENT)
 			return (perror("epoll_ctl"), 1);		
 	}
-	std::cerr << "turnCgi on=" << on << " sock=" << sock << std::endl;
 	return (0);
 }
 
 int	ClientSocket::switchToWrite()
 {
-	std::cerr << sock << " switched to write" << std::endl;
 	struct epoll_event ev;
 	ev.data.fd = sock;
 	ev.events = EPOLLOUT;
@@ -232,7 +232,6 @@ int	ClientSocket::switchToWrite()
 
 int	ClientSocket::handleWrite()
 {
-	std::cerr << "handleWrite called, answer.size=" << answer.size() << " error=" << error << std::endl;
 	if (error)
 	{
 		if (!myServer)
@@ -262,7 +261,9 @@ int	ClientSocket::handleWrite()
 	{
 		if (writeSize == -1)
 			writeSize = answer.size();
-		int n = write(sock, &answer.at(nWrite), writeSize - nWrite);
+		if (writeSize == 0 || answer.empty() || nWrite >= (int)answer.size())
+			return (resetWrite(true, true), !connection);
+		int n = write(sock, answer.c_str() + nWrite, writeSize - nWrite);
 		if (n == -1)
 			return (1);
 		nWrite += n;
@@ -280,7 +281,6 @@ int	ClientSocket::setError(int num)
 
 int	ClientSocket::handleFirstLine()
 {
-	std::cerr << "first line: $" << request.substr(0, readTo) << "$" << std::endl;
 	std::string firstLine = request.substr(0, readTo);
 	std::string word;
 	static std::stringstream	ss;
@@ -347,7 +347,6 @@ static int unChunk(std::string line, int &size, int &skipTo)
 
 int	ClientSocket::fillBody()
 {
-	std::cerr << sock << " filling body" << std::endl;
 	if (message->headerExists("transfer-encoding") && !message->getHeader("transfer-encoding").empty())
 	{
 		int size;
@@ -437,21 +436,19 @@ int	ClientSocket::handleRequest()
 	if (error)
 		return (answerError(error));
 	else if (!readDone && !header)
-	{
-		std::cerr << "entering fillbody from handlerequest\n";
 		fillBody();
-	}
 	if (error)
 		return (answerError(error));
 	if (readDone)
 	{
-		std::cerr << sock << " reading done time to parse" << std::endl;
 		int errCheck;
 		std::string cgiPath;
 		std::string rootPath;
 		if (myServer->isCGI(message, location, cgiPath, rootPath))
 		{
 			errCheck = myServer->fillCgi(location, cgiPath, rootPath, answer, this, connection);
+			if (errCheck == -10)
+				return (-10);
 			if (errCheck)
 				return (answerError(errCheck));
 			return (0);
@@ -464,7 +461,6 @@ int	ClientSocket::handleRequest()
 			errCheck = myServer->fillDelete(message, answer, location, connection);
 		if (errCheck)
 			return (answerError(errCheck));
-		std::cerr << "dispatching, readTo=" << readTo << " request.size()=" << request.size() << std::endl;
 		return (resetRead());
 	}
 	return (0);

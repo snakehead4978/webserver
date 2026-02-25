@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 09:32:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 07:14:09 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 10:17:06 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -105,7 +105,6 @@ int Message::parseLine(std::string line)
 	smallcase(word);
 	if (word.empty())
 		return (400);
-	std::cerr << "$" << word <<  "$" << std::endl;
 	if (colon == line.npos)
 	{
 		if (word == "host")

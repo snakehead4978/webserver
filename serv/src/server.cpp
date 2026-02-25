@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 12:00:55 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 09:34:01 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 12:45:17 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -58,16 +58,16 @@ static int handleClient(ClientSocket *client)
 	errcheck = read(client->getSock(), &(*readBuff)[0], readSize);
 	if (errcheck <= 0)
 	{
-		if (errcheck == -1)
-			std::cerr << "Read error: Client closed" << std::endl;
-		else
-			std::cerr << "Client has disconnected" << std::endl;
+		// std::cout << "Client " << client->getSock() << " disconnected" << std::endl;
 		return (1);
 	}
 	client->addToRequest(*readBuff, errcheck);
-	if (client->handleRequest())
+	int err = client->handleRequest();
+	if (err == -10)
+		return (-10);
+	if (err)
 	{
-		std::cout << "Client out" << std::endl;
+		// std::cout << "Client " << client->getSock() << " disconnected" << std::endl;
 		return (1);
 	}
 	return (0);
@@ -104,7 +104,6 @@ int	ACustomSocket::epol = -1;
 
 static int removeSocketFromLists(ACustomSocket *socket, std::list<ACustomSocket *> &socketsToFree)
 {
-	std::cerr << "removing fd=" << socket->getSock() << " type=" << socket->isWhat() << std::endl;
 	ACustomSocket::allSockets.erase(socket->getSock());
 	socketsToFree.remove(socket);
 	delete socket;
@@ -147,7 +146,7 @@ int	server(std::list<ServerSocket *>&servers)
 		if ((*i)->startServer(ACustomSocket::socketsToFree, ACustomSocket::allSockets))
 			return (clearServers(servers), 1);
 	}
-	struct epoll_event events[10];
+	struct epoll_event events[MAX_EVENTS];
 	int nEvents;
 	std::map<int, ACustomSocket *>::iterator found;
 	while (1)
@@ -169,14 +168,20 @@ int	server(std::list<ServerSocket *>&servers)
 				}
 				if (events[i].events & EPOLLIN)
 				{
-					if (handleClient((ClientSocket *)found->second))
+					int err = handleClient((ClientSocket *)found->second);
+					if (err == -10)
+					{
+						closeAllSockets(ACustomSocket::socketsToFree);
+						return (1);
+					}
+					if (err)
 						removeSocketFromLists(found->second, ACustomSocket::socketsToFree);
 				}
 				else
 				{
 					if (((ClientSocket *)found->second)->handleWrite())
 					{
-						std::cout << "Client out" << std::endl;
+						// std::cout << "Client " << found->second->getSock() << " disconnected" << std::endl;
 						removeSocketFromLists(found->second, ACustomSocket::socketsToFree);
 					}
 				}
@@ -204,5 +209,5 @@ int	server(std::list<ServerSocket *>&servers)
 		timeoutCheck(ACustomSocket::socketsToFree);
 	}
 	closeAllSockets(ACustomSocket::socketsToFree);
-	return (1);
+	return (0);
 }
