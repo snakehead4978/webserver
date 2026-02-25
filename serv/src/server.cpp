@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 12:00:55 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 12:45:17 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 12:55:41 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -58,7 +58,7 @@ static int handleClient(ClientSocket *client)
 	errcheck = read(client->getSock(), &(*readBuff)[0], readSize);
 	if (errcheck <= 0)
 	{
-		// std::cout << "Client " << client->getSock() << " disconnected" << std::endl;
+		std::cout << "Client " << client->getSock() << " disconnected" << std::endl;
 		return (1);
 	}
 	client->addToRequest(*readBuff, errcheck);
@@ -67,7 +67,7 @@ static int handleClient(ClientSocket *client)
 		return (-10);
 	if (err)
 	{
-		// std::cout << "Client " << client->getSock() << " disconnected" << std::endl;
+		std::cout << "Client " << client->getSock() << " disconnected" << std::endl;
 		return (1);
 	}
 	return (0);
@@ -181,7 +181,7 @@ int	server(std::list<ServerSocket *>&servers)
 				{
 					if (((ClientSocket *)found->second)->handleWrite())
 					{
-						// std::cout << "Client " << found->second->getSock() << " disconnected" << std::endl;
+						std::cout << "Client " << found->second->getSock() << " disconnected" << std::endl;
 						removeSocketFromLists(found->second, ACustomSocket::socketsToFree);
 					}
 				}

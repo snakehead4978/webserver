@@ -6,7 +6,7 @@
 /*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 12:27:24 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 12:56:22 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -44,7 +44,7 @@ ClientSocket::ClientSocket(int soc) : ACustomSocket(CLIENT)
 		resetSocket();
 		return ;
 	}
-	// std::cout << "Client " << sock << " connected" << std::endl;
+	std::cout << "Client " << sock << " connected" << std::endl;
 }
 
 ClientSocket::~ClientSocket()
