@@ -3,35 +3,35 @@
 /*                                                        :::      ::::::::   */
 /*   Cgi.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
+/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/23 01:01:21 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 12:36:18 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/25 14:42:49 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Cgi.hpp"
 #include "ClientSocket.hpp"
 
-#include <execinfo.h>
+// #include <execinfo.h>
 
-static void traced_close(int fd, const char *loc)
-{
-    if (fd == -1)
-    {
-        void *bt[10];
-        int n = backtrace(bt, 10);
-        char **syms = backtrace_symbols(bt, n);
-        std::cerr << "close(-1) called from " << loc << std::endl;
-        for (int i = 0; i < n; i++)
-            std::cerr << syms[i] << std::endl;
-        free(syms);
-        return ;
-    }
-    close(fd);
-}
+// static void traced_close(int fd, const char *loc)
+// {
+//     if (fd == -1)
+//     {
+//         void *bt[10];
+//         int n = backtrace(bt, 10);
+//         char **syms = backtrace_symbols(bt, n);
+//         std::cerr << "close(-1) called from " << loc << std::endl;
+//         for (int i = 0; i < n; i++)
+//             std::cerr << syms[i] << std::endl;
+//         free(syms);
+//         return ;
+//     }
+//     close(fd);
+// }
 
-#define close(fd) traced_close(fd, __FUNCTION__)
+// #define close(fd) traced_close(fd, __FUNCTION__)
 
 Cgi::Cgi(ClientSocket *_client, std::string &_inter, std::string _path, std::string &_port) : ACustomSocket(CGI)
 {
