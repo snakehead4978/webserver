@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/26 14:25:13 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/26 14:29:35 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -534,23 +534,15 @@ int	ClientSocket::checkTime()
 	t = std::time(0);
 	if (!nRead)
 	{
-		if (std::difftime(t, time) >= 10)
+		if (std::difftime(t, time) >= 75)
 		{
 			time = std::time(0);			
 			answerError(408);
 		}
-		if (std::difftime(t, time) >= 75)
-			answerError(408);
-	}
-	else if (std::difftime(t, time) >= 10)
-	{
-		time = std::time(0);			
-		if (check == -1)
-			return (1);
-		answerError(408);
 	}
 	else if (std::difftime(t, time) >= 60)
 	{
+		time = std::time(0);			
 		if (check == -1)
 			return (1);
 		answerError(408);
