@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   ClientSocket.hpp                                   :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
+/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:11 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 03:43:29 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/26 14:20:23 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -82,7 +82,7 @@ class ClientSocket : public ACustomSocket
 		void	delCgi();
 		bool	getConnection();
 		void	setConnection(bool);
-
+		void	setTime();
 
 };
 

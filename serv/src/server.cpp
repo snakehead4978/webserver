@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   server.cpp                                         :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
+/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 12:00:55 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 12:55:41 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/26 14:23:17 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -56,6 +56,7 @@ static int handleClient(ClientSocket *client)
 	}
 	readBuff->assign(readSize, 0);
 	errcheck = read(client->getSock(), &(*readBuff)[0], readSize);
+	client->setTime();
 	if (errcheck <= 0)
 	{
 		std::cout << "Client " << client->getSock() << " disconnected" << std::endl;

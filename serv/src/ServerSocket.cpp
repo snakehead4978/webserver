@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   ServerSocket.cpp                                   :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
+/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 12:22:32 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/26 13:20:47 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -752,6 +752,7 @@ int	ServerSocket::fillError(int error, Message *message, std::string &answer, in
 				close(fd);
 		}
 	}
+	// std::cout << "page: " << getDefaultPage(error).c_str() << std::endl;
 	fd = open(getDefaultPage(error).c_str(), O_RDONLY);
 	if (fd != -1 && fstat(fd, &statBuf) == 0)
 	{

@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   ClientSocket.cpp                                   :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
+/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 12:56:22 by jeremie          ###   ########.fr       */
+/*   Updated: 2026/02/26 14:25:13 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -190,6 +190,11 @@ int	ClientSocket::switchToRead()
 	return (0);
 }
 
+void ClientSocket::setTime()
+{
+	time = std::time(0);
+}
+
 int	ClientSocket::turnCgi(bool on)
 {
 	struct epoll_event ev;
@@ -251,9 +256,10 @@ int	ClientSocket::handleWrite()
 		if (n == -1)
 			return (resetWrite(true, false), 1);
 		if (n == 0)
-			return (resetWrite(true, true), !connection);
+			return (resetWrite(true, true), 1);
 		if (write(sock, outBuff, n) == -1)
 			return (1);
+		time = std::time(0);
 		if (n < OUTPUT_BUFF)
 			return (resetWrite(true, true), !connection);
 	}
@@ -264,11 +270,12 @@ int	ClientSocket::handleWrite()
 		if (writeSize == 0 || answer.empty() || nWrite >= (int)answer.size())
 			return (resetWrite(true, true), !connection);
 		int n = write(sock, answer.c_str() + nWrite, writeSize - nWrite);
+		time = std::time(0);
 		if (n == -1)
 			return (1);
 		nWrite += n;
 		if (nWrite == writeSize)
-			return (resetWrite(writeFile == -1, true), !connection);
+			return (resetWrite(writeFile == -1, true), false);
 	}
 	return (0);
 }
@@ -527,8 +534,20 @@ int	ClientSocket::checkTime()
 	t = std::time(0);
 	if (!nRead)
 	{
+		if (std::difftime(t, time) >= 10)
+		{
+			time = std::time(0);			
+			answerError(408);
+		}
 		if (std::difftime(t, time) >= 75)
 			answerError(408);
+	}
+	else if (std::difftime(t, time) >= 10)
+	{
+		time = std::time(0);			
+		if (check == -1)
+			return (1);
+		answerError(408);
 	}
 	else if (std::difftime(t, time) >= 60)
 	{
