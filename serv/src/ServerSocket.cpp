@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/26 13:20:47 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/26 15:21:34 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -566,7 +566,10 @@ int	ServerSocket::startServer(std::list<ACustomSocket *> &socketsToFree, std::ma
 		info.sin_addr.s_addr = htonl(INADDR_ANY);
 		info.sin_port = htons(*i);
 		if (bind(sock, (struct sockaddr *)&info, sizeof(info)) == -1)
+		{
+			std::cerr << "port: " << *i << std::endl;
 			return (resetServerSocket(), perror("bind"), 1);
+		}
 		if (listen(sock, SOMAXCONN) == -1)
 			return (resetServerSocket(), perror("listen"), 1);
 		if (addToEpoll())

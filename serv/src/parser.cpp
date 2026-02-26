@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/09 18:46:02 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/26 14:20:34 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/26 15:20:40 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -115,7 +115,9 @@ int getNextLine(std::ifstream &conf, std::string &line)
 int	parseConfig(std::string filename, std::list<ServerSocket *> &servers)
 {
 	std::ifstream conf(filename.c_str(), std::ios::binary);
-	if (!conf.is_open())
+	if (!conf || !conf.is_open() || conf.fail())
+		return (perror("ifstream"), 1);
+	if (conf.peek() == conf.eof() || conf.fail())
 		return (perror("ifstream"), 1);
 	std::string line;
 	while (std::getline(conf, line))
