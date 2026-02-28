@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/26 15:21:34 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 17:19:01 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1116,6 +1116,10 @@ int	ServerSocket::fillGet(Message *message, std::string &answer, int &writeFile,
 	std::string filepath = buildFilepath(root, target, location->path);
 	if (stat(filepath.c_str(), &statBuf) == -1)
 		return (404);
+	char *checkPath = realpath(filepath.c_str(), 0);
+	if (!checkPath)
+		return (403);
+	free(checkPath);
 	if (S_ISDIR(statBuf.st_mode))
 	{
 		if (target[target.size() - 1] != '/')

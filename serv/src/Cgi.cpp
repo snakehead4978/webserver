@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/23 01:01:21 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/25 14:42:49 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 17:29:48 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -61,12 +61,13 @@ Cgi::~Cgi()
     {
         epoll_ctl(epol, EPOLL_CTL_DEL, sock, NULL);
         allSockets.erase(sock);
+		close(sock);
     }
 	if (sockWrite != -1)
 	{
-		close(sockWrite);
 		epoll_ctl(epol, EPOLL_CTL_DEL, sockWrite, 0);
 		allSockets.erase(sockWrite);
+		close(sockWrite);
 	}
 	if (pipeIn[0] != -1)
 		close(pipeIn[0]);
@@ -238,6 +239,7 @@ int	Cgi::buildEnv()
 			env.push_back((char *)it->c_str());
 	}
 	env.push_back(NULL);
+	cgiExit(false);
 	execve(inter.c_str(), argv, &env[0]);
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
@@ -263,6 +265,7 @@ int	Cgi::execute()
 		close(pipeIn[0]);
 		close(pipeOut[1]);
 		buildEnv();
+		_exit(1);
 		return (-10);
 	}
 	time = std::time(0);
@@ -336,9 +339,7 @@ int	Cgi::handleRead()
 		client->cgiError(500);
 		return (1);
 	}
-	std::string buff(0, OUTPUT_BUFF + 1);
-	buff.clear();
-	buff.assign(buf, n);
+	std::string buff(buf, n);
 	if (!n)
 	{
 		int status;

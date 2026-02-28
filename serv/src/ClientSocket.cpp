@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/26 14:29:35 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 17:36:55 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -423,9 +423,14 @@ int	ClientSocket::handleRequest()
 		}
 		else
 		{
-			message = new Message;
-			if (!message)
+			try
+			{
+				message = new Message;
+			}
+			catch(const std::exception& e)
+			{
 				return (answerError(500));
+			}			
 			nRead = 1;
 			readTo = n;
 			if (handleFirstLine())
