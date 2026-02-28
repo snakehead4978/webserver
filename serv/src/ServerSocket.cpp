@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/28 17:19:01 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 18:55:09 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -831,23 +831,41 @@ int	ServerSocket::isCGI(Message *message, t_locations *location, std::string &cg
 		target = target.substr(0, q);
 	if (hasDot(target))
 		return (0);
-    size_t dot = target.rfind('.');
-    if (dot == std::string::npos)
-        return (0);
-    std::string ext = target.substr(dot);
-	getRoot(location, serverSettings, rootPath);
-	rootPath = buildFilepath(rootPath, message->getTarget(), location->path);
-    if (location->cgi.count(ext))
-    {
-        cgiPath = location->cgi[ext];
-        return (1);
-    }
-    if (serverSettings.cgi.count(ext))
-    {
-        cgiPath = serverSettings.cgi[ext];
-        return (1);
-    }
-    return (0);
+	size_t dot = target.rfind('.');
+	if (dot == std::string::npos)
+		return (0);
+	std::string ext = target.substr(dot);
+	std::string rootDir;
+	getRoot(location, serverSettings, rootDir);
+	rootPath = buildFilepath(rootDir, message->getTarget(), location->path);
+	char *checkRoot = realpath(rootDir.c_str(), 0);
+	char *checkPath = realpath(rootPath.c_str(), 0);
+	if (!checkRoot || !checkPath)
+	{
+		free(checkRoot);
+		free(checkPath);
+		return (0);
+	}
+	size_t rootLen = strlen(checkRoot);
+	if (strncmp(checkPath, checkRoot, rootLen) != 0 || checkPath[rootLen] != '/')
+	{
+		free(checkRoot);
+		free(checkPath);
+		return (0);
+	}
+	free(checkRoot);
+	free(checkPath);
+	if (location->cgi.count(ext))
+	{
+		cgiPath = location->cgi[ext];
+		return (1);
+	}
+	if (serverSettings.cgi.count(ext))
+	{
+		cgiPath = serverSettings.cgi[ext];
+		return (1);
+	}
+	return (0);
 }
 
 static int	extractHeader(std::string &partHeaders, const std::string &key, std::string &value)
@@ -1116,9 +1134,23 @@ int	ServerSocket::fillGet(Message *message, std::string &answer, int &writeFile,
 	std::string filepath = buildFilepath(root, target, location->path);
 	if (stat(filepath.c_str(), &statBuf) == -1)
 		return (404);
+	char *checkRoot = realpath(root.c_str(), 0);
 	char *checkPath = realpath(filepath.c_str(), 0);
-	if (!checkPath)
+	if (!checkRoot || !checkPath)
+	{
+		free(checkRoot);
+		free(checkPath);
 		return (403);
+	}
+	size_t rootLen = strlen(checkRoot);
+	if (strncmp(checkPath, checkRoot, rootLen) != 0
+		|| (checkPath[rootLen] != '/' && checkPath[rootLen] != '\0'))
+	{
+		free(checkRoot);
+		free(checkPath);
+		return (403);
+	}
+	free(checkRoot);
 	free(checkPath);
 	if (S_ISDIR(statBuf.st_mode))
 	{

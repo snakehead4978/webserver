@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:27:51 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/28 17:36:55 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 18:48:33 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -257,7 +257,7 @@ int	ClientSocket::handleWrite()
 			return (resetWrite(true, false), 1);
 		if (n == 0)
 			return (resetWrite(true, true), 1);
-		if (write(sock, outBuff, n) == -1)
+		if (write(sock, outBuff, n) <= 0)
 			return (1);
 		time = std::time(0);
 		if (n < OUTPUT_BUFF)
@@ -271,7 +271,7 @@ int	ClientSocket::handleWrite()
 			return (resetWrite(true, true), !connection);
 		int n = write(sock, answer.c_str() + nWrite, writeSize - nWrite);
 		time = std::time(0);
-		if (n == -1)
+		if (n <= 0)
 			return (1);
 		nWrite += n;
 		if (nWrite == writeSize)

@@ -6,7 +6,7 @@
 /*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/04 12:00:55 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/26 14:23:17 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 18:59:13 by jla-chon         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,6 +26,7 @@ void killServer(int sig)
 
 void signalSetup()
 {
+	signal(SIGPIPE, SIG_IGN);
 	signal(SIGINT, killServer);
 }
 
@@ -121,13 +122,13 @@ static void	timeoutCheck(std::list<ACustomSocket *> &socketsToFree)
 	}
 	for (std::vector<ACustomSocket *>::iterator i = toRemove.begin(); i != toRemove.end(); i++)
 		removeSocketFromLists(*i, socketsToFree);
-	toRemove.clear();
+	std::set<ACustomSocket *> toRemoveCgi;
 	for (std::map<int, ACustomSocket *>::iterator i = ACustomSocket::allSockets.begin(); i != ACustomSocket::allSockets.end(); i++)
 	{
 		if (i->second->isWhat() == CGI && ((Cgi *)i->second)->checkTime())
-			toRemove.push_back(i->second);
+			toRemoveCgi.insert(i->second);
 	}
-	for (std::vector<ACustomSocket *>::iterator i = toRemove.begin(); i != toRemove.end(); i++)
+	for (std::set<ACustomSocket *>::iterator i = toRemoveCgi.begin(); i != toRemoveCgi.end(); i++)
 	{
 		((Cgi *)*i)->sendTimeout();
 		delete *i;
