@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   ServerSocket.cpp                                   :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
+/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/06 17:08:40 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/28 18:55:09 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 20:57:36 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -958,7 +958,7 @@ static int	writeToFile(std::string &filepath, std::string &body, size_t dataStar
 	int	fd = open(filepath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
 	if (fd == -1)
 		return (500);
-	if (write(fd, body.c_str() + dataStart, dataEnd - dataStart) == -1)
+	if (write(fd, body.c_str() + dataStart, dataEnd - dataStart) <= 0)
 	{
 		close(fd);
 		return (500);

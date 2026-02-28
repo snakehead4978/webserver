@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   Cgi.cpp                                            :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: jla-chon <jla-chon@student.42.fr>          +#+  +:+       +#+        */
+/*   By: jeremie <jeremie@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/02/23 01:01:21 by jeremie           #+#    #+#             */
-/*   Updated: 2026/02/28 17:29:48 by jla-chon         ###   ########.fr       */
+/*   Updated: 2026/02/28 20:52:00 by jeremie          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -239,7 +239,7 @@ int	Cgi::buildEnv()
 			env.push_back((char *)it->c_str());
 	}
 	env.push_back(NULL);
-	cgiExit(false);
+	// cgiExit(false);
 	execve(inter.c_str(), argv, &env[0]);
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
@@ -265,7 +265,6 @@ int	Cgi::execute()
 		close(pipeIn[0]);
 		close(pipeOut[1]);
 		buildEnv();
-		_exit(1);
 		return (-10);
 	}
 	time = std::time(0);
